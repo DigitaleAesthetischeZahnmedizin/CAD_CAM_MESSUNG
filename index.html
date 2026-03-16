@@ -1,0 +1,1692 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>3D Zahn-Visualisierung</title>
+  <script type="importmap">
+    {
+      "imports": {
+        "three": "https://cdn.jsdelivr.net/npm/three@0.172.0/build/three.module.js",
+        "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.172.0/examples/jsm/",
+        "three-mesh-bvh": "https://cdn.jsdelivr.net/npm/three-mesh-bvh@0.9.8/build/index.module.js"
+      }
+    }
+  </script>
+  <style>
+    body { margin: 0; display: flex; height: 100vh; }
+    #sidebar { width: 400px; background: #333; color: white; padding: 10px; position: relative; box-sizing: border-box; display: flex; flex-direction: column; }
+    #sidebar-content { flex: 1; overflow-y: auto; display: flex; flex-direction: column; gap: 10px; }
+    #resize-bar { position: absolute; top: 0; right: 0; width: 10px; height: 100%; cursor: ew-resize; background: #777; z-index: 10; }
+    #three-mount { flex-grow: 1; overflow: hidden; position: relative; }
+    .analysis-row { display: grid; gap: 6px; margin-top: 6px; }
+    .analysis-row.inline { grid-template-columns: 1fr 1fr; gap: 6px; align-items: center; }
+    .analysis-status { font-size: 12px; background: #222; border: 1px solid #555; padding: 6px; white-space: pre-wrap; }
+    .analysis-status.ok { color: #91e5bc; }
+    .analysis-status.warn { color: #ffd48a; }
+    .analysis-status.err { color: #ffaaaa; }
+    .role-badge { display: inline-block; border: 1px solid #666; border-radius: 999px; padding: 1px 6px; font-size: 11px; margin-left: 4px; color: #ddd; }
+    .role-badge.ref { border-color: #2f5e87; color: #9cd2ff; }
+    .role-badge.target { border-color: #7d5b2d; color: #ffd29c; }
+    .analysis-compact { font-size: 12px; line-height: 1.3; color: #ddd; }
+    
+    .analysis-tooltip { position: absolute; pointer-events: none; background: rgba(8,10,14,.95); color: white; border: 1px solid #445; border-radius: 8px; padding: 6px 8px; font-size: 12px; white-space: nowrap; transform: translate(12px, 12px); z-index: 10; display: none; }
+    
+    .analysis-legend { position: absolute; right: 12px; bottom: 12px; width: 190px; background: rgba(10,12,16,.92); border: 1px solid #445; border-radius: 8px; padding: 8px; z-index: 9; display: none; color: white; font-size: 12px; }
+    .analysis-legend-title { font-size: 12px; margin-bottom: 4px; }
+    .analysis-legend-wrap { display: grid; grid-template-columns: 22px 1fr; gap: 8px; align-items: stretch; }
+    .analysis-legend-bar { width: 22px; min-height: 286px; border: 1px solid #556; border-radius: 2px; background: linear-gradient(180deg,#d80000 0%,#0a00cc 100%); position: relative; overflow: hidden; }
+    .analysis-legend-ticks { display: grid; grid-template-rows: repeat(14, 1fr); min-height: 286px; align-items: center; font-size: 11px; color: #e3e9f4; line-height: 1; }
+    .analysis-legend-tick { display: flex; align-items: center; justify-content: flex-start; gap: 4px; white-space: nowrap; font-variant-numeric: tabular-nums; }
+    .analysis-legend-tick.zero { color: #bfc9da; }
+    .analysis-legend-tick.green-th { font-weight: 700; color: #ffffff; }
+    .analysis-legend-tick::before { content: ''; width: 6px; height: 1px; background: #7f8ba0; opacity: .65; flex: 0 0 auto; }
+    .analysis-legend-labels { display: none; }
+    .analysis-legend-center { display: none; }
+    .analysis-legend-thresholds { display: none; }
+    .analysis-legend-chip { display: none; }
+    .analysis-legend-subtle { margin-top: 6px; color: #9fb0c6; font-size: 10px; display: none; } 
+    
+    .sidebar-section { border: 1px solid #666; padding: 8px; margin-bottom: 10px; }
+    .model-control { border: 1px solid #555; padding: 6px; margin-top: 6px; }
+    .small-input { width: 60px; }
+    #sun-fan-controls { background: #2a2d35; border: 1px dashed #667; padding: 10px; border-radius: 6px; margin-top: 8px; display: none !important; } 
+    .sun-fan-val { font-weight: bold; color: #9cd2ff; float: right; }
+
+    /* CSS für angepinnte Messungen */
+    #measurement-lines-svg { position: absolute; top: 0; left: 0; width: 100%; height: 100%; pointer-events: none; z-index: 5; }
+    .measurement-line { stroke: #999; stroke-width: 1.5px; filter: drop-shadow(1px 1px 1px rgba(0,0,0,0.5)); }
+    .pinned-measurement {
+      position: absolute;
+      background: #2a2d35;
+      color: #fff;
+      border: 1px solid #666;
+      padding: 4px 8px;
+      font-size: 12px;
+      font-weight: bold;
+      border-radius: 4px;
+      cursor: move;
+      user-select: none;
+      transform: translate(-50%, -50%);
+      white-space: nowrap;
+      z-index: 15;
+      box-shadow: 2px 2px 5px rgba(0,0,0,0.5);
+      font-variant-numeric: tabular-nums;
+    }
+    .pinned-measurement:hover { border-color: #aaa; background: #353842; }
+    .btn-danger { background: #900; color: white; border: none; padding: 4px 8px; cursor: pointer; border-radius: 4px; }
+    .btn-danger:hover { background: #c00; }
+
+    /* CSS für Abschnitt-Vermessung (Schnittebene) */
+    #section-svg { position: absolute; top: 0; left: 0; width: 100%; height: 100%; pointer-events: none; z-index: 6; display: none; }
+    .section-draw-line { stroke: #ffcc00; stroke-width: 2px; stroke-dasharray: 4; }
+  </style>
+</head>
+<body>
+  <div id="sidebar">
+    <div id="sidebar-content">
+      
+      <div class="sidebar-section">
+        <label>3D Modell per Weblink (STL / PLY):</label>
+        <input type="text" id="model-url-input" placeholder="http://...modell.ply" style="width:100%; margin-top:4px;" />
+        <label style="display:block; margin-top:6px;">Textur per Weblink (Optional, JPG):</label>
+        <input type="text" id="texture-url-input" placeholder="http://...textur.jpg" style="width:100%; margin-top:4px;" />
+        <button id="load-url-button" style="margin-top:8px;">Modell laden</button>
+      </div>
+
+      <div class="sidebar-section">
+        <input type="file" id="file-input" accept=".stl,.ply,.jpg,.jpeg,.png" multiple style="display:none" />
+        <button id="add-model-button">+ Lokales Modell / Textur hinzufügen</button>
+        <div style="font-size:11px; color:#aaa; margin-top:6px; line-height:1.3;">
+          Wähle für Modelle mit Textur die <b>.ply</b> und die <b>.jpg</b> Datei gleichzeitig aus, um sie kombiniert zu laden.
+        </div>
+      </div>
+
+      <div class="sidebar-section">
+        <label>Skalierung für alle Modelle:</label>
+        <input type="range" id="global-scale-input" min="0.1" max="2" step="0.1" value="1.0" />
+        <br>
+        <label>Aktuelle Skalierung: <span id="current-scale">1.0</span></label>
+      </div>
+
+      <div class="sidebar-section" style="display: none;">
+        <label>FOV (Field of View):</label>
+        <input type="range" id="fov-input" min="1" max="180" step="1" value="20" />
+        <br>
+        <label>Aktuelles FOV: <span id="current-fov">20</span></label>
+      </div>
+
+      <div class="sidebar-section">
+        <label>Hintergrundfarbe:</label>
+        <input type="color" id="bg-color-input" value="#ffffff" />
+      </div>
+
+      <div class="sidebar-section">
+        <label>Gitter anzeigen:</label>
+        <input type="checkbox" id="grid-toggle" checked>
+      </div>
+
+      <div class="sidebar-section" id="camera-controls" style="display:none;">
+        <label>Kameraposition</label><br>
+        <label>X: </label><input type="number" id="camera-x" value="0" step="0.1"><br>
+        <label>Y: </label><input type="number" id="camera-y" value="20" step="0.1"><br>
+        <label>Z: </label><input type="number" id="camera-z" value="120" step="0.1"><br>
+        <button id="update-camera-button" style="margin-top:4px;">Kamera aktualisieren</button>
+      </div>
+
+      <div class="sidebar-section" id="analysis-section">
+        <div><strong>STL/PLY Vergleich (Heatmap / Messung)</strong></div>
+
+        <div class="analysis-row">
+          <label>Referenz/Ziel über Modellliste unten festlegen</label>
+          <button id="analysis-build-bvh-button" disabled>Messung vorbereiten</button>
+        </div>
+
+        <div class="analysis-row" style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap;">
+          <label><input type="checkbox" id="analysis-heatmap-toggle" disabled> Heatmap anzeigen</label>
+          <div style="display: flex; align-items: center; gap: 8px;">
+              <label><input type="checkbox" id="analysis-hover-toggle" disabled> Maus-Messung (Pins)</label>
+              <button id="clear-pins-button" class="btn-danger" style="display:none; font-size:11px;">Alle Pins löschen</button>
+          </div>
+        </div>
+
+        <div class="analysis-row">
+          <label>Punktgröße (Pins): <span id="pin-point-size-val" style="font-weight:bold; color:#9cd2ff;">0.25 mm</span></label>
+          <input type="range" id="pin-point-size-input" min="0.05" max="1.0" step="0.05" value="0.25" style="width:100%;">
+        </div>
+
+        <div class="analysis-row">
+          <label>Grünbereich ± (mm)</label>
+          <input type="number" id="analysis-threshold-green" min="0.001" step="0.001" value="0.050" style="width:100%;" disabled>
+        </div>
+        <div class="analysis-row">
+          <label>Gelb/Rot & Hellblau/Dunkelblau ± (mm)</label>
+          <input type="number" id="analysis-threshold-mid" min="0.001" step="0.001" value="1.100" style="width:100%;" disabled>
+        </div>
+        <div class="analysis-row">
+          <label>Maximalgrenzwert ± (mm)</label>
+          <input type="number" id="analysis-heatmap-max" min="0.001" step="0.001" value="4.000" style="width:100%;" disabled>
+        </div>
+        
+        <div class="analysis-row" style="display:none;">
+          <label>Einheit</label>
+          <select id="analysis-unit" style="width:100%;" disabled>
+            <option value="mm">mm</option>
+          </select>
+        </div>
+
+        <div class="analysis-row inline">
+          <div>
+            <label>Heatmap Transparenz (Ziel)</label><br>
+            <input type="range" id="analysis-heatmap-opacity" min="0.05" max="1" step="0.01" value="0.85" disabled style="width:100%;">
+          </div>
+          <div>
+            <label>Opazität</label><br>
+            <div id="analysis-heatmap-opacity-value" style="padding:6px 8px;border:1px solid #555;border-radius:4px;">0.85</div>
+          </div>
+        </div>
+
+        <div class="analysis-row">
+          <select id="analysis-heatmap-mode" style="display:none;" disabled>
+            <option value="signed" selected>signiert (+/-)</option>
+          </select>
+          <button id="analysis-recompute-button" disabled>Heatmap neu berechnen</button>
+        </div>
+
+        <div class="analysis-row" style="display:none;">
+          <label>Messstrategie</label>
+          <select id="analysis-measurement-strategy" style="width:100%;" disabled>
+            <option value="sun_fan" selected>Sonne / Fächer (Iterativ, hochpräzise)</option>
+          </select>
+        </div>
+
+        <div id="sun-fan-controls">
+          <div style="font-size:11px; color:#bbb; margin-bottom: 8px;">
+            Achtung: Hohe Werte benötigen viel Rechenleistung.
+          </div>
+          <div style="margin-bottom: 6px;">
+            <label>Strahlen pro Stufe: <span class="sun-fan-val" id="sun-fan-ray-val">256</span></label>
+            <input type="range" id="sun-fan-rays" min="8" max="256" step="8" value="256" style="width:100%;">
+          </div>
+          <div style="margin-bottom: 8px;">
+            <label>Iterationen (Stufen): <span class="sun-fan-val" id="sun-fan-stage-val">5</span></label>
+            <input type="range" id="sun-fan-stages" min="1" max="5" step="1" value="5" style="width:100%;">
+          </div>
+          <div style="padding-top: 6px; border-top: 1px solid #444;">
+            <label style="display:flex; align-items:center; gap:6px; font-size:11.5px; cursor:pointer;">
+              <input type="checkbox" id="sun-fan-prevent-penetration" checked>
+              Leerräume / Lücken überspringen (Sichtlinien-Prüfung)
+            </label>
+          </div>
+        </div>
+
+        <div class="analysis-row">
+          <div style="display:none;">Referenz: <span id="analysis-ref-name">—</span></div>
+          <div style="display:none;">Ziel: <span id="analysis-target-name">—</span></div>
+          <div style="display:none;">Hover: <span id="analysis-hover-value">Δ = —</span></div>
+          <div style="font-size: 11px; color: #aaa; margin-top: -2px;">(Klicke auf das Modell bei aktiver Maus-Messung, um Pins zu setzen)</div>
+          <div id="analysis-status" class="analysis-status warn">Bitte Referenz- und Zielmodell festlegen.</div>
+        </div>
+      </div>
+
+      <div class="sidebar-section" id="section-analysis-section">
+        <div><strong>Abschnitt-Vermessung (2D Schnitt)</strong></div>
+        <div class="analysis-compact" style="margin-top:4px;">
+          Zieht eine Schnittebene (Clipping Plane) durch die Modelle zur exakten 2D-Kantenmessung.
+        </div>
+        <div class="analysis-row">
+          <label style="cursor:pointer;"><input type="checkbox" id="section-draw-toggle" disabled> Schnittebene zeichnen (Klick & Drag)</label>
+        </div>
+        <div class="analysis-row" style="display: flex; gap: 8px; align-items: center;">
+          <label style="cursor:pointer;"><input type="checkbox" id="section-measure-toggle" disabled> Auf Schnitt messen (Pins)</label>
+          <button id="clear-section-button" class="btn-danger" style="display:none; font-size:11px;">Schnitt verwerfen</button>
+        </div>
+      </div>
+
+      <div class="sidebar-section" id="model-controls"></div>
+    </div>
+    <div id="resize-bar"></div>
+  </div>
+  
+  <div id="three-mount">
+    <div id="analysis-tooltip" class="analysis-tooltip"></div>
+    <svg id="measurement-lines-svg"></svg>
+
+    <div id="analysis-legend" class="analysis-legend"><div id="analysis-legend-title" class="analysis-legend-title">Heatmap (signiert)</div><div class="analysis-legend-wrap"><div id="analysis-legend-bar" class="analysis-legend-bar"></div><div id="analysis-legend-ticks" class="analysis-legend-ticks"></div></div><div class="analysis-legend-labels"><span id="analysis-legend-left">-4.000 mm</span><span id="analysis-legend-center" class="analysis-legend-center">0</span><span id="analysis-legend-right">+4.000 mm</span></div><div id="analysis-legend-thresholds" class="analysis-legend-thresholds"></div><div id="analysis-legend-subtle" class="analysis-legend-subtle">m-Stil: feste Farbstufen / Schwellen</div></div>
+  </div>
+
+<script type="module">
+    import * as THREE from 'three';
+    import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+    import { STLLoader } from 'three/addons/loaders/STLLoader.js';
+    import { PLYLoader } from 'three/addons/loaders/PLYLoader.js'; 
+    import { computeBoundsTree, disposeBoundsTree, acceleratedRaycast } from 'three-mesh-bvh';
+
+    THREE.BufferGeometry.prototype.computeBoundsTree = computeBoundsTree;
+    THREE.BufferGeometry.prototype.disposeBoundsTree = disposeBoundsTree;
+    THREE.Mesh.prototype.raycast = acceleratedRaycast;
+
+    let models = [];
+    let sidebarWidth = 400;
+    let globalScale = 1.0;
+    let fov = 20;
+
+    const stlLoader = new STLLoader();
+    const plyLoader = new PLYLoader();
+    const textureLoader = new THREE.TextureLoader();
+
+    const mountRef = document.getElementById('three-mount');
+    const modelControls = document.getElementById('model-controls');
+    const fileInput = document.getElementById('file-input');
+    const globalScaleInput = document.getElementById('global-scale-input');
+    const fovInput = document.getElementById('fov-input');
+    const bgColorInput = document.getElementById('bg-color-input');
+    const gridToggle = document.getElementById('grid-toggle');
+    const linesSvg = document.getElementById('measurement-lines-svg');
+    const clearPinsBtn = document.getElementById('clear-pins-button');
+
+    const analysisUI = {
+      section: document.getElementById('analysis-section'),
+      buildBvhBtn: document.getElementById('analysis-build-bvh-button'),
+      heatmapToggle: document.getElementById('analysis-heatmap-toggle'),
+      hoverToggle: document.getElementById('analysis-hover-toggle'),
+      thresholdGreenInput: document.getElementById('analysis-threshold-green'),
+      thresholdMidInput: document.getElementById('analysis-threshold-mid'),
+      heatmapMaxInput: document.getElementById('analysis-heatmap-max'),
+      heatmapOpacityInput: document.getElementById('analysis-heatmap-opacity'),
+      heatmapOpacityValue: document.getElementById('analysis-heatmap-opacity-value'),
+      unitSelect: document.getElementById('analysis-unit'),
+      heatmapModeSelect: document.getElementById('analysis-heatmap-mode'),
+      measurementStrategySelect: document.getElementById('analysis-measurement-strategy'),
+      recomputeBtn: document.getElementById('analysis-recompute-button'),
+      refName: document.getElementById('analysis-ref-name'),
+      targetName: document.getElementById('analysis-target-name'),
+      hoverValue: document.getElementById('analysis-hover-value'),
+      status: document.getElementById('analysis-status'),
+      tooltip: document.getElementById('analysis-tooltip'),
+      legend: document.getElementById('analysis-legend'),
+      legendTitle: document.getElementById('analysis-legend-title'),
+      legendLeft: document.getElementById('analysis-legend-left'),
+      legendCenter: document.getElementById('analysis-legend-center'),
+      legendRight: document.getElementById('analysis-legend-right'),
+      legendBar: document.getElementById('analysis-legend-bar'),
+      legendTicks: document.getElementById('analysis-legend-ticks'),
+      legendThresholds: document.getElementById('analysis-legend-thresholds'),
+      legendSubtle: document.getElementById('analysis-legend-subtle'),
+      sunFanControls: document.getElementById('sun-fan-controls'),
+      sunFanRaysInput: document.getElementById('sun-fan-rays'),
+      sunFanRaysVal: document.getElementById('sun-fan-ray-val'),
+      sunFanStagesInput: document.getElementById('sun-fan-stages'),
+      sunFanStagesVal: document.getElementById('sun-fan-stage-val'),
+      sunFanPreventCheckbox: document.getElementById('sun-fan-prevent-penetration'),
+      pinPointSizeInput: document.getElementById('pin-point-size-input'),
+      pinPointSizeVal: document.getElementById('pin-point-size-val')
+    };
+
+    const sectionUI = {
+      drawToggle: document.getElementById('section-draw-toggle'),
+      measureToggle: document.getElementById('section-measure-toggle'),
+      clearBtn: document.getElementById('clear-section-button'),
+      svg: document.createElementNS('http://www.w3.org/2000/svg', 'svg')
+    };
+    sectionUI.svg.id = 'section-svg';
+    mountRef.appendChild(sectionUI.svg);
+    const sectionDrawLine = document.createElementNS('http://www.w3.org/2000/svg', 'line');
+    sectionDrawLine.setAttribute('class', 'section-draw-line');
+    sectionUI.svg.appendChild(sectionDrawLine);
+
+    const sectionState = {
+      isDrawing: false,
+      drawStart: { x: 0, y: 0 },
+      plane: null,
+      refEdges: null,
+      targetEdges: null
+    };
+    const sectionEdgeMatRef = new THREE.LineBasicMaterial({ color: 0x4aa3ff, depthTest: false, linewidth: 2 });
+    const sectionEdgeMatTarget = new THREE.LineBasicMaterial({ color: 0xffb020, depthTest: false, linewidth: 2 });
+
+    const analysisState = {
+      refIndex: null,
+      targetIndex: null,
+      hoverEnabled: false,
+      heatmapEnabled: false,
+      signedEnabled: true,
+      heatmapMode: 'signed',
+      measurementStrategy: 'sun_fan',
+      isComputingHeatmap: false,
+      lastMouse: { x: 0, y: 0, inside: false },
+      sunFanRays: 256,
+      sunFanStages: 5,
+      sunFanPreventPenetration: true,
+      currentHoverData: null,
+      pinPointSize: 0.25 
+    };
+
+    const pinnedMeasurements = [];
+    let isDraggingPin = false;
+    let dragPinTarget = null;
+    let dragPinStartOffset = { x: 0, y: 0 };
+    let dragMouseStart = { x: 0, y: 0 };
+
+    analysisUI.sunFanRaysInput.addEventListener('input', (e) => {
+        analysisState.sunFanRays = parseInt(e.target.value);
+        analysisUI.sunFanRaysVal.textContent = analysisState.sunFanRays;
+    });
+    analysisUI.sunFanStagesInput.addEventListener('input', (e) => {
+        analysisState.sunFanStages = parseInt(e.target.value);
+        analysisUI.sunFanStagesVal.textContent = analysisState.sunFanStages;
+    });
+    analysisUI.sunFanPreventCheckbox.addEventListener('change', (e) => {
+        analysisState.sunFanPreventPenetration = !!e.target.checked;
+        if (analysisState.hoverEnabled && analysisState.lastMouse.inside) {
+            updateHoverMeasurement(analysisState.lastMouse.x, analysisState.lastMouse.y);
+        }
+    });
+
+    analysisUI.pinPointSizeInput.addEventListener('input', (e) => {
+        analysisState.pinPointSize = parseFloat(e.target.value);
+        const s = analysisState.pinPointSize;
+        
+        if(analysisUI.pinPointSizeVal) {
+            analysisUI.pinPointSizeVal.textContent = s.toFixed(2) + ' mm';
+        }
+        
+        hoverPRef.scale.set(s, s, s);
+        hoverPTarget.scale.set(s, s, s);
+        
+        pinnedMeasurements.forEach(pin => {
+            if(pin.targetDot) pin.targetDot.scale.set(s, s, s);
+            if(pin.refDot) pin.refDot.scale.set(s, s, s);
+        });
+    });
+
+    const scene = new THREE.Scene();
+    const camera = new THREE.PerspectiveCamera(fov, window.innerWidth / window.innerHeight, 0.1, 1000);
+    camera.position.set(0, 20, 120);
+    camera.lookAt(0, 0, 0);
+
+    const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
+    renderer.setSize(window.innerWidth - sidebarWidth, window.innerHeight);
+    mountRef.appendChild(renderer.domElement);
+
+    const controls = new OrbitControls(camera, renderer.domElement);
+    controls.enableDamping = true;
+
+    const light = new THREE.HemisphereLight(0xffffff, 0x444444, 1.2);
+    scene.add(light);
+    const dirLight = new THREE.DirectionalLight(0xffffff, 0.8);
+    dirLight.position.set(0, 20, 10);
+    scene.add(dirLight);
+
+    const gridHelper = new THREE.GridHelper(50, 50);
+    scene.add(gridHelper);
+    const axesHelper = new THREE.AxesHelper(30);
+    scene.add(axesHelper);
+
+    renderer.setClearColor(bgColorInput.value, 1);
+
+    const raycaster = new THREE.Raycaster();
+    raycaster.firstHitOnly = true;
+    const mouseNdc = new THREE.Vector2();
+    
+    const pinSphereGeom = new THREE.SphereGeometry(1, 12, 12);
+    const hoverLineGeom = new THREE.BufferGeometry().setFromPoints([new THREE.Vector3(), new THREE.Vector3()]);
+    const hoverLine = new THREE.Line(hoverLineGeom, new THREE.LineBasicMaterial({ color: 0xffffff, linewidth: 2 }));
+    const hoverPRef = new THREE.Mesh(pinSphereGeom, new THREE.MeshBasicMaterial({ color: 0x4aa3ff }));
+    const hoverPTarget = new THREE.Mesh(pinSphereGeom, new THREE.MeshBasicMaterial({ color: 0xffb020 }));
+    
+    hoverPRef.scale.setScalar(analysisState.pinPointSize);
+    hoverPTarget.scale.setScalar(analysisState.pinPointSize);
+
+    hoverLine.renderOrder = 1000; hoverLine.material.depthTest = false;
+    hoverPRef.renderOrder = 1000; hoverPRef.material.depthTest = false;
+    hoverPTarget.renderOrder = 1000; hoverPTarget.material.depthTest = false;
+    
+    hoverLine.visible = hoverPRef.visible = hoverPTarget.visible = false;
+    scene.add(hoverLine, hoverPRef, hoverPTarget);
+
+    const _matInv = new THREE.Matrix4();
+    const _matN = new THREE.Matrix3();
+    const _vLocal = new THREE.Vector3();
+    const _vWorld = new THREE.Vector3();
+    const _nLocal = new THREE.Vector3();
+    const _nWorld = new THREE.Vector3();
+    const _tmpVec = new THREE.Vector3();
+    const _tmpVec2 = new THREE.Vector3();
+    const _cpTargetObj = { point: new THREE.Vector3(), distance: 0, faceIndex: -1 };
+    const _segmentRaycaster = new THREE.Raycaster();
+    _segmentRaycaster.firstHitOnly = true;
+    const _candidateRaycaster = new THREE.Raycaster();
+    _candidateRaycaster.firstHitOnly = true;
+
+    const _vA = new THREE.Vector3();
+    const _vB = new THREE.Vector3();
+    const _vC = new THREE.Vector3();
+
+    function escapeHtml(str) { return String(str).replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('>', '&gt;').replaceAll('"', '&quot;').replaceAll("'", '&#039;'); }
+    function setAnalysisStatus(text, type = 'warn') { if (!analysisUI.status) return; analysisUI.status.textContent = text; analysisUI.status.className = `analysis-status ${type}`; }
+    function getModel(index) { return Number.isInteger(index) ? models[index] : null; }
+    function getRefModel() { return Number.isInteger(analysisState.refIndex) ? models[analysisState.refIndex] : null; }
+    function getTargetModel() { return Number.isInteger(analysisState.targetIndex) ? models[analysisState.targetIndex] : null; }
+    function rolesReady() { return Number.isInteger(analysisState.refIndex) && Number.isInteger(analysisState.targetIndex) && analysisState.refIndex !== analysisState.targetIndex && getRefModel()?.mesh && getTargetModel()?.mesh; }
+
+    function buildSegmentedLegendGradient(colorsHex, orientation = 'horizontal') {
+      const n = colorsHex.length; if (!n) return 'none'; const stops = [];
+      for (let i = 0; i < n; i++) {
+        const a = (i / n) * 100; const b = ((i + 1) / n) * 100;
+        const col = `#${colorsHex[i].toString(16).padStart(6, '0')}`;
+        stops.push(`${col} ${a.toFixed(3)}%`, `${col} ${b.toFixed(3)}%`);
+      }
+      return `linear-gradient(${orientation === 'vertical' ? '180deg' : '90deg'}, ${stops.join(', ')})`;
+    }
+
+    function getmSignedCustomSpec() {
+      const { green, mid, max } = getSignedThresholdsMm();
+      const posStep = [0.2, 0.4, 0.6, 0.8].map(f => +(mid * f).toFixed(6));
+      const ticksAsc = [-max, -mid, -posStep[3], -posStep[2], -posStep[1], -posStep[0], -green, green, posStep[0], posStep[1], posStep[2], posStep[3], mid, max];
+      const colors = [0x0010d8, 0x0030ff, 0x0058ff, 0x0088ff, 0x00b5ff, 0x27d4ff, 0x18d64f, 0xf0e000, 0xffbd00, 0xff9200, 0xff6400, 0xff2f00, 0xdf0000];
+      return { mode: 'signed', colors, tickValuesAsc: ticksAsc, tickValuesDesc: [...ticksAsc].reverse(), green, mid, max };
+    }
+
+    function getmAbsCustomSpec() {
+      const { green, mid, max } = getSignedThresholdsMm();
+      const posStep = [0.2, 0.4, 0.6, 0.8].map(f => +(mid * f).toFixed(6));
+      const ticksAsc = [0, green, posStep[0], posStep[1], posStep[2], posStep[3], mid, max];
+      const colors = [0x18d64f, 0xf0e000, 0xffbd00, 0xff9200, 0xff6400, 0xff2f00, 0xdf0000];
+      return { mode: 'abs', colors, tickValuesAsc: ticksAsc, tickValuesDesc: [...ticksAsc].reverse(), green, mid, max };
+    }
+
+    function getmLegendSpec(mode, maxMm) { return mode === 'signed' ? getmSignedCustomSpec() : getmAbsCustomSpec(); }
+
+    function heatColormSignedByMm(signedMm) {
+      const spec = getmSignedCustomSpec(); const { colors, tickValuesAsc, max } = spec;
+      const x = THREE.MathUtils.clamp(signedMm, -max, max);
+      for (let i = 0; i < tickValuesAsc.length - 1; i++) { if (x <= tickValuesAsc[i + 1] || i === tickValuesAsc.length - 2) return new THREE.Color(colors[i]); }
+      return new THREE.Color(colors[colors.length - 1]);
+    }
+
+    function heatColormAbsByMm(absMm, maxMm) {
+      const spec = getmLegendSpec('abs', maxMm); const { colors, tickValuesAsc, max } = spec;
+      const x = THREE.MathUtils.clamp(absMm, 0, max);
+      for (let i = 0; i < tickValuesAsc.length - 1; i++) { if (x <= tickValuesAsc[i + 1] || i === tickValuesAsc.length - 2) return new THREE.Color(colors[i]); }
+      return new THREE.Color(colors[colors.length - 1]);
+    }
+
+    function updateLegendThresholdChips(spec, maxMm) { if (!analysisUI.legendThresholds) return; analysisUI.legendThresholds.innerHTML = ''; }
+
+    function formatLegendTickMm(v, mode) {
+      if (mode === 'signed') {
+        if (Math.abs(v) < 1e-9) return '0,000';
+        const sign = v > 0 ? '' : '-';
+        return `${sign}${Math.abs(v).toFixed(3).replace('.', ',')}`;
+      }
+      return `${v.toFixed(3).replace('.', ',')}`;
+    }
+
+    function renderVerticalLegendTicks(spec, mode, maxMm) {
+      if (!analysisUI.legendTicks) return;
+      let valuesDesc = spec.tickValuesDesc;
+      analysisUI.legendTicks.style.gridTemplateRows = `repeat(${Math.max(valuesDesc.length, 1)}, 1fr)`;
+      analysisUI.legendTicks.innerHTML = valuesDesc.map(v => {
+        const isGreenThreshold = mode === 'signed' ? (Math.abs(v - spec.green) < 1e-6 || Math.abs(v + spec.green) < 1e-6) : (Math.abs(v - spec.green) < 1e-6);
+        const isZero = Math.abs(v) < 1e-9;
+        const cls = ['analysis-legend-tick', isGreenThreshold ? 'green-th' : '', isZero ? 'zero' : ''].filter(Boolean).join(' ');
+        return `<div class="${cls}">${formatLegendTickMm(v, mode)}</div>`;
+      }).join('');
+    }
+
+    function updateLegendUI() {
+      const maxMm = getHeatmapMaxMm(); const mode = analysisState.heatmapMode;
+      analysisUI.legendTitle.textContent = `Heatmap (${mode === 'signed' ? 'signiert' : 'absolut'})`;
+      const spec = getmLegendSpec(mode, maxMm);
+      analysisUI.legendBar.style.background = buildSegmentedLegendGradient([...spec.colors].reverse(), 'vertical');
+      if (mode === 'signed') {
+        analysisUI.legendLeft.textContent = `-${spec.max.toFixed(3)} mm`; analysisUI.legendCenter.textContent = '0'; analysisUI.legendRight.textContent = `+${spec.max.toFixed(3)} mm`;
+      } else {
+        analysisUI.legendLeft.textContent = '0'; analysisUI.legendCenter.textContent = ''; analysisUI.legendRight.textContent = `${spec.max.toFixed(3)} mm`;
+      }
+      renderVerticalLegendTicks(spec, mode, maxMm);
+      updateLegendThresholdChips(spec, maxMm);
+    }
+    
+    function updateAnalysisUIState() {
+      const ready = rolesReady();
+      const ref = getRefModel();
+      const target = getTargetModel();
+      const bvhReady = !!(ready && ref?.analysis?.bvhReady && target?.analysis?.bvhReady);
+
+      analysisUI.refName.textContent = ref?.name || '—';
+      analysisUI.targetName.textContent = target?.name || '—';
+
+      analysisUI.buildBvhBtn.disabled = !ready || analysisState.isComputingHeatmap;
+      analysisUI.heatmapToggle.disabled = !bvhReady || analysisState.isComputingHeatmap;
+      analysisUI.hoverToggle.disabled = !bvhReady;
+      
+      sectionUI.drawToggle.disabled = !bvhReady;
+
+      analysisUI.thresholdGreenInput.disabled = !bvhReady || analysisState.isComputingHeatmap;
+      analysisUI.thresholdMidInput.disabled = !bvhReady || analysisState.isComputingHeatmap;
+      analysisUI.heatmapMaxInput.disabled = !bvhReady || analysisState.isComputingHeatmap;
+      analysisUI.heatmapOpacityInput.disabled = !bvhReady;
+      analysisUI.unitSelect.disabled = !bvhReady;
+      analysisUI.heatmapModeSelect.disabled = !bvhReady;
+      if (analysisUI.measurementStrategySelect) analysisUI.measurementStrategySelect.disabled = !bvhReady;
+      
+      const stratNow = getMeasurementStrategy();
+      
+      if (analysisUI.sunFanControls) {
+         analysisUI.sunFanControls.style.display = 'none';
+      }
+
+      analysisUI.recomputeBtn.disabled = !bvhReady || !analysisState.heatmapEnabled || analysisState.isComputingHeatmap;
+
+      if (!ready) {
+        analysisUI.legend.style.display = 'none';
+        analysisUI.heatmapToggle.checked = false;
+        analysisUI.hoverToggle.checked = false;
+        sectionUI.drawToggle.checked = false;
+      }
+      updateLegendUI();
+      syncHeatmapOpacityUi();
+    }
+
+    function getHeatmapMaxMm() { const v = parseFloat(analysisUI.heatmapMaxInput.value); return Number.isFinite(v) && v > 0 ? v : 4.0; }
+
+    function getSignedThresholdsMm() {
+      let green = parseFloat(analysisUI.thresholdGreenInput?.value); let mid = parseFloat(analysisUI.thresholdMidInput?.value); let max = getHeatmapMaxMm();
+      if (!Number.isFinite(green) || green <= 0) green = 0.05; if (!Number.isFinite(mid) || mid <= 0) mid = 1.1; if (!Number.isFinite(max) || max <= 0) max = 4.0;
+      if (green >= mid) green = Math.max(0.001, mid * 0.25); if (mid >= max) mid = Math.max(green + 0.001, max * 0.275); if (mid >= max) max = mid + 0.001;
+      return { green, mid, max };
+    }
+
+    function getHeatmapOpacity() { const v = parseFloat(analysisUI.heatmapOpacityInput?.value); return Number.isFinite(v) ? THREE.MathUtils.clamp(v, 0.05, 1) : 0.85; }
+    function syncHeatmapOpacityUi() { if (analysisUI.heatmapOpacityValue) { analysisUI.heatmapOpacityValue.textContent = getHeatmapOpacity().toFixed(2); } }
+
+    function getMeasurementStrategy() {
+      const allowed = new Set(['closest', 'sun_fan']);
+      const uiVal = analysisUI.measurementStrategySelect?.value;
+      if (allowed.has(uiVal)) return uiVal;
+      if (allowed.has(analysisState.measurementStrategy)) return analysisState.measurementStrategy;
+      return 'sun_fan';
+    }
+
+    function syncMeasurementStrategyUi() {
+      const v = getMeasurementStrategy();
+      analysisState.measurementStrategy = v;
+      if (analysisUI.measurementStrategySelect && analysisUI.measurementStrategySelect.value !== v) { analysisUI.measurementStrategySelect.value = v; }
+      updateAnalysisUIState();
+    }
+
+    function syncTargetOpacitySliderWithHeatmap(value) {
+      const targetIndex = analysisState.targetIndex; if (!Number.isInteger(targetIndex)) return;
+      const m = models[targetIndex]; if (!m) return;
+      const v = THREE.MathUtils.clamp(parseFloat(value), 0.05, 1); if (!Number.isFinite(v)) return;
+
+      m.opacity = v;
+      if (m.analysis?.originalMaterial) { m.analysis.originalMaterial.opacity = v; m.analysis.originalMaterial.transparent = true; m.analysis.originalMaterial.needsUpdate = true; }
+      if (m.material) { m.material.opacity = v; m.material.transparent = true; m.material.needsUpdate = true; }
+      if (m.mesh?.material) { m.mesh.material.opacity = v; m.mesh.material.transparent = true; m.mesh.material.needsUpdate = true; }
+      const slider = document.getElementById(`model-opacity-${targetIndex}`); if (slider) slider.value = String(v);
+    }
+
+    function clearHoverVisuals() {
+      hoverLine.visible = hoverPRef.visible = hoverPTarget.visible = false;
+      analysisUI.tooltip.style.display = 'none'; analysisUI.hoverValue.textContent = 'Δ = —';
+      analysisState.currentHoverData = null;
+    }
+
+    function resetAnalysisStateOnRoleChange() {
+      disableHeatmap({ silent: true }); analysisState.hoverEnabled = false; analysisUI.hoverToggle.checked = false;
+      clearHoverVisuals(); clearAllPinnedMeasurements(); updateAnalysisUIState();
+      
+      if(sectionUI.clearBtn) sectionUI.clearBtn.click();
+
+      if (rolesReady()) { setAnalysisStatus('Referenz und Ziel gesetzt. Nächster Schritt: Messung vorbereiten.', 'ok'); } else { setAnalysisStatus('Bitte Referenz- und Zielmodell festlegen.', 'warn'); }
+    }
+
+    function setAnalysisRole(index, role) {
+      if (!models[index] || !models[index].mesh) return;
+      disableHeatmap({ silent: true }); 
+      if (role === 'ref') { if (analysisState.targetIndex === index) analysisState.targetIndex = null; analysisState.refIndex = index; } else if (role === 'target') { if (analysisState.refIndex === index) analysisState.refIndex = null; analysisState.targetIndex = index; }
+      updateModelControls(); resetAnalysisStateOnRoleChange();
+      if (role === 'target') syncTargetOpacitySliderWithHeatmap(getHeatmapOpacity());
+    }
+    window.setAnalysisRole = setAnalysisRole;
+
+    function clearAnalysisRoles() {
+      disableHeatmap({ silent: true }); analysisState.refIndex = null; analysisState.targetIndex = null;
+      updateModelControls(); resetAnalysisStateOnRoleChange();
+    }
+
+    function ensureBvhForModel(model) {
+      if (!model?.mesh?.geometry) throw new Error('Modell/Geometrie fehlt.');
+      if (model.analysis?.bvhReady && model.mesh.geometry.boundsTree) return;
+      model.mesh.geometry.computeBoundsTree(); model.analysis.bvhReady = true;
+    }
+
+    async function buildBvhForRoles() {
+      if (!rolesReady()) { setAnalysisStatus('Bitte Referenz und Ziel festlegen.', 'warn'); return; }
+      const ref = getRefModel(); const target = getTargetModel();
+
+      models.forEach((m, idx) => {
+          if (m && m.mesh) {
+              if (idx !== analysisState.refIndex && idx !== analysisState.targetIndex) {
+                  m.visible = false;
+                  m.mesh.visible = false;
+                  const toggle = document.getElementById(`visibility-toggle-${idx}`);
+                  if(toggle) toggle.checked = false;
+              } else {
+                  m.visible = true;
+                  m.mesh.visible = true;
+                  const toggle = document.getElementById(`visibility-toggle-${idx}`);
+                  if(toggle) toggle.checked = true;
+              }
+          }
+      });
+      updateModelControls();
+
+      try {
+        setAnalysisStatus('Messung wird vorbereitet ...', 'warn'); await new Promise(requestAnimationFrame); ensureBvhForModel(ref);
+        setAnalysisStatus('Referenz bereit ...', 'warn'); await new Promise(requestAnimationFrame); ensureBvhForModel(target);
+        setAnalysisStatus('Referenz + Ziel bereit.', 'ok');
+        
+        if (!analysisUI.hoverToggle.checked) {
+            analysisUI.hoverToggle.checked = true;
+            analysisUI.hoverToggle.dispatchEvent(new Event('change'));
+        }
+      } catch (e) { console.error(e); setAnalysisStatus(`Fehler: ${e.message}`, 'err'); }
+      updateAnalysisUIState();
+      if (Number.isInteger(analysisState.targetIndex)) { const t = getTargetModel(); if (t) { const slider = document.getElementById(`model-opacity-${analysisState.targetIndex}`); if (slider) slider.value = String(t.opacity ?? 1); } }
+    }
+
+    function getClippedEdges(mesh, planeWorld) {
+        if (!mesh || !mesh.geometry || !mesh.geometry.boundsTree) return null;
+
+        const inverseMatrix = new THREE.Matrix4().copy(mesh.matrixWorld).invert();
+        const localPlane = planeWorld.clone().applyMatrix4(inverseMatrix);
+
+        const segments = [];
+        mesh.geometry.boundsTree.shapecast({
+            intersectsBounds: box => {
+                return localPlane.intersectsBox(box);
+            },
+            intersectsTriangle: tri => {
+                let dA = localPlane.distanceToPoint(tri.a);
+                let dB = localPlane.distanceToPoint(tri.b);
+                let dC = localPlane.distanceToPoint(tri.c);
+
+                if ((dA > 0 && dB > 0 && dC > 0) || (dA < 0 && dB < 0 && dC < 0)) return false;
+
+                const pts = [];
+                if (dA * dB <= 0 && dA !== dB) pts.push(new THREE.Vector3().lerpVectors(tri.a, tri.b, dA / (dA - dB)));
+                if (dB * dC <= 0 && dB !== dC) pts.push(new THREE.Vector3().lerpVectors(tri.b, tri.c, dB / (dB - dC)));
+                if (dC * dA <= 0 && dC !== dA) pts.push(new THREE.Vector3().lerpVectors(tri.c, tri.a, dC / (dC - dA)));
+
+                if (pts.length >= 2) {
+                    segments.push(pts[0].x, pts[0].y, pts[0].z);
+                    segments.push(pts[1].x, pts[1].y, pts[1].z);
+                }
+                return false;
+            }
+        });
+
+        if (segments.length === 0) return null;
+        const geom = new THREE.BufferGeometry();
+        geom.setAttribute('position', new THREE.Float32BufferAttribute(segments, 3));
+        return geom;
+    }
+
+    function findClosestPointOnSegments(worldPoint, lineSegments) {
+        if (!lineSegments || !lineSegments.geometry) return null;
+        
+        const inverseMat = new THREE.Matrix4().copy(lineSegments.matrixWorld).invert();
+        const localPoint = worldPoint.clone().applyMatrix4(inverseMat);
+        
+        const pos = lineSegments.geometry.attributes.position;
+        let minDistSq = Infinity;
+        let closestLocal = new THREE.Vector3();
+        
+        const pA = new THREE.Vector3(); const pB = new THREE.Vector3();
+        const line = new THREE.Line3(); const closestTemp = new THREE.Vector3();
+        
+        for (let i = 0; i < pos.count; i += 2) {
+            pA.fromBufferAttribute(pos, i); pB.fromBufferAttribute(pos, i + 1);
+            line.set(pA, pB);
+            line.closestPointToPoint(localPoint, true, closestTemp);
+            
+            const distSq = closestTemp.distanceToSquared(localPoint);
+            if (distSq < minDistSq) { minDistSq = distSq; closestLocal.copy(closestTemp); }
+        }
+        
+        if (minDistSq === Infinity) return null;
+        return closestLocal.applyMatrix4(lineSegments.matrixWorld);
+    }
+
+    function generateSectionPlane(startX, startY, endX, endY, width, height) {
+        if (!rolesReady()) { setAnalysisStatus('Rollen müssen gesetzt sein für Abschnitt.', 'warn'); return; }
+        
+        const ndcStart = new THREE.Vector2((startX / width) * 2 - 1, -(startY / height) * 2 + 1);
+        const ndcEnd = new THREE.Vector2((endX / width) * 2 - 1, -(endY / height) * 2 + 1);
+
+        const p1 = new THREE.Vector3(ndcStart.x, ndcStart.y, 0.5).unproject(camera);
+        const p2 = new THREE.Vector3(ndcEnd.x, ndcEnd.y, 0.5).unproject(camera);
+        
+        const camPos = camera.position.clone();
+        const dir1 = p1.clone().sub(camPos).normalize();
+        const dir2 = p2.clone().sub(p1).normalize();
+        const normal = new THREE.Vector3().crossVectors(dir2, dir1).normalize();
+
+        const planeWorld = new THREE.Plane().setFromNormalAndCoplanarPoint(normal, p1);
+        sectionState.plane = planeWorld;
+
+        if (sectionState.refEdges) { scene.remove(sectionState.refEdges); sectionState.refEdges.geometry.dispose(); }
+        if (sectionState.targetEdges) { scene.remove(sectionState.targetEdges); sectionState.targetEdges.geometry.dispose(); }
+
+        const refModel = getRefModel(); const targetModel = getTargetModel();
+        ensureBvhForModel(refModel); ensureBvhForModel(targetModel);
+
+        const refGeom = getClippedEdges(refModel.mesh, planeWorld);
+        if (refGeom) {
+            sectionState.refEdges = new THREE.LineSegments(refGeom, sectionEdgeMatRef);
+            sectionState.refEdges.matrixAutoUpdate = false; sectionState.refEdges.matrixWorld.copy(refModel.mesh.matrixWorld); sectionState.refEdges.matrix.copy(refModel.mesh.matrix);
+            sectionState.refEdges.renderOrder = 999; scene.add(sectionState.refEdges);
+        }
+
+        const targetGeom = getClippedEdges(targetModel.mesh, planeWorld);
+        if (targetGeom) {
+            sectionState.targetEdges = new THREE.LineSegments(targetGeom, sectionEdgeMatTarget);
+            sectionState.targetEdges.matrixAutoUpdate = false; sectionState.targetEdges.matrixWorld.copy(targetModel.mesh.matrixWorld); sectionState.targetEdges.matrix.copy(targetModel.mesh.matrix);
+            sectionState.targetEdges.renderOrder = 999; scene.add(sectionState.targetEdges);
+        }
+
+        sectionUI.measureToggle.disabled = false;
+        sectionUI.measureToggle.checked = true; 
+        sectionUI.clearBtn.style.display = 'inline-block';
+        
+        analysisUI.hoverToggle.checked = false; 
+        analysisState.hoverEnabled = false;
+
+        // --- NEU: Kamera ausrichten und Transparenz anpassen ---
+        if (Number.isInteger(analysisState.refIndex)) {
+            window.updateOpacity(analysisState.refIndex, 0.05);
+            const s = document.getElementById('model-opacity-' + analysisState.refIndex);
+            if(s) s.value = 0.05;
+        }
+        if (Number.isInteger(analysisState.targetIndex)) {
+            window.updateOpacity(analysisState.targetIndex, 0.05);
+            const s = document.getElementById('model-opacity-' + analysisState.targetIndex);
+            if(s) s.value = 0.05;
+        }
+        if (analysisState.heatmapEnabled) {
+            const hSlider = document.getElementById('analysis-heatmap-opacity');
+            const hVal = document.getElementById('analysis-heatmap-opacity-value');
+            if (hSlider) hSlider.value = 0.05;
+            if (hVal) hVal.textContent = "0.05";
+        }
+
+        const dist = camera.position.distanceTo(controls.target);
+        camera.position.copy(controls.target).add(normal.clone().multiplyScalar(dist));
+        camera.lookAt(controls.target);
+        controls.update();
+
+        const cX = document.getElementById('camera-x');
+        const cY = document.getElementById('camera-y');
+        const cZ = document.getElementById('camera-z');
+        if (cX) cX.value = camera.position.x.toFixed(2);
+        if (cY) cY.value = camera.position.y.toFixed(2);
+        if (cZ) cZ.value = camera.position.z.toFixed(2);
+        // ------------------------------------------------------
+        
+        setAnalysisStatus('Abschnitt erstellt. Du kannst jetzt auf der Ebene messen.', 'ok');
+    }
+
+    function updateSectionHover(clientX, clientY) {
+        if (!sectionUI.measureToggle.checked || !sectionState.plane || !sectionState.targetEdges || !sectionState.refEdges) { return false; }
+        
+        const rect = renderer.domElement.getBoundingClientRect();
+        const x = clientX - rect.left; const y = clientY - rect.top;
+        mouseNdc.x = (x / rect.width) * 2 - 1; mouseNdc.y = -(y / rect.height) * 2 + 1;
+        
+        raycaster.setFromCamera(mouseNdc, camera);
+        const planeIntersect = new THREE.Vector3();
+        raycaster.ray.intersectPlane(sectionState.plane, planeIntersect);
+        
+        if (!planeIntersect) { clearHoverVisuals(); return true; }
+
+        const ptTargetWorld = findClosestPointOnSegments(planeIntersect, sectionState.targetEdges);
+        if (!ptTargetWorld) { clearHoverVisuals(); return true; }
+        
+        const ptRefWorld = findClosestPointOnSegments(ptTargetWorld, sectionState.refEdges);
+        if (!ptRefWorld) { clearHoverVisuals(); return true; }
+
+        const scaleFactor = Number.isFinite(globalScale) && globalScale > 0 ? globalScale : 1;
+        const distMm = ptTargetWorld.distanceTo(ptRefWorld) / scaleFactor;
+        
+        const txt = `Schnitt Δ = ${distMm.toFixed(3)} mm`;
+        analysisUI.hoverValue.textContent = txt; analysisUI.tooltip.textContent = txt;
+        analysisUI.tooltip.style.left = `${x}px`; analysisUI.tooltip.style.top = `${y}px`; analysisUI.tooltip.style.display = 'block';
+
+        hoverPTarget.position.copy(ptTargetWorld); hoverPRef.position.copy(ptRefWorld);
+        hoverPRef.visible = hoverPTarget.visible = true;
+
+        const arr = hoverLine.geometry.attributes.position.array;
+        arr[0] = ptTargetWorld.x; arr[1] = ptTargetWorld.y; arr[2] = ptTargetWorld.z; 
+        arr[3] = ptRefWorld.x; arr[4] = ptRefWorld.y; arr[5] = ptRefWorld.z;
+        hoverLine.geometry.attributes.position.needsUpdate = true; hoverLine.visible = true;
+
+        analysisState.currentHoverData = {
+            worldPoint: ptTargetWorld.clone(),
+            refPoint: ptRefWorld.clone(),
+            signedMm: distMm, 
+            absMm: distMm,
+            colorHex: 'ffffff'
+        };
+        return true; 
+    }
+
+    function getNormalFromFace(mesh, faceIndex) {
+        if (!mesh || !mesh.geometry || faceIndex < 0) return null;
+        const geom = mesh.geometry; const pos = geom.getAttribute('position'); const index = geom.getIndex();
+        let a, b, c;
+        if (index) { a = index.getX(faceIndex * 3); b = index.getX(faceIndex * 3 + 1); c = index.getX(faceIndex * 3 + 2); } 
+        else { a = faceIndex * 3; b = faceIndex * 3 + 1; c = faceIndex * 3 + 2; }
+        _vA.fromBufferAttribute(pos, a); _vB.fromBufferAttribute(pos, b); _vC.fromBufferAttribute(pos, c);
+        _vC.sub(_vB); _vA.sub(_vB);
+        const normal = new THREE.Vector3().crossVectors(_vC, _vA).normalize();
+        _matN.getNormalMatrix(mesh.matrixWorld); normal.applyMatrix3(_matN).normalize();
+        return normal;
+    }
+
+    function buildMeasurementResult(worldPoint, closestWorld, refNormalWorld = null, extra = {}) {
+      const sceneDist = closestWorld.distanceTo(worldPoint);
+      const scaleFactor = Number.isFinite(globalScale) && globalScale > 0 ? globalScale : 1;
+      const distanceMm = sceneDist / scaleFactor; 
+
+      let signedMm = distanceMm;
+      if (refNormalWorld) {
+        const sign = Math.sign(_tmpVec2.copy(worldPoint).sub(closestWorld).dot(refNormalWorld)) || 1;
+        signedMm = distanceMm * sign;
+      }
+      return { closestWorld: closestWorld.clone(), distanceMm, signedMm, faceIndex: -1, method: 'unknown', ...extra };
+    }
+
+    function closestPointOnTargetBvh(worldPoint, targetModel, targetNormalWorld = null) {
+      if (!targetModel?.mesh?.geometry?.boundsTree) return null;
+      _matInv.copy(targetModel.mesh.matrixWorld).invert(); _vLocal.copy(worldPoint).applyMatrix4(_matInv);
+      _cpTargetObj.point.set(0, 0, 0); _cpTargetObj.distance = Infinity; _cpTargetObj.faceIndex = -1;
+
+      const res = targetModel.mesh.geometry.boundsTree.closestPointToPoint(_vLocal, _cpTargetObj, 0, Infinity);
+      if (!res) return null;
+
+      const closestWorld = _tmpVec.copy(res.point).applyMatrix4(targetModel.mesh.matrixWorld);
+      const refNormalWorld = getNormalFromFace(targetModel.mesh, res.faceIndex); 
+      
+      const cp = buildMeasurementResult(worldPoint, closestWorld, refNormalWorld, { faceIndex: res.faceIndex, method: 'closest-point' });
+      cp.refNormalWorld = refNormalWorld;
+      return cp;
+    }
+
+    function raycastFirstMesh(mesh, origin, dir, far = Infinity, rc = _segmentRaycaster) {
+      if (!mesh?.geometry?.boundsTree) return null;
+      rc.ray.origin.copy(origin); rc.ray.direction.copy(dir); rc.near = 0; rc.far = far;
+      const hits = rc.intersectObject(mesh, false);
+      return hits.length ? hits[0] : null;
+    }
+
+    function getFibonacciRays(count, normal, maxAngleRad) {
+        const rays = [];
+        const goldenRatio = (1 + Math.sqrt(5)) / 2;
+        const up = new THREE.Vector3(0, 1, 0);
+        if (Math.abs(normal.y) > 0.99) up.set(1, 0, 0);
+        const right = new THREE.Vector3().crossVectors(up, normal).normalize();
+        const top = new THREE.Vector3().crossVectors(normal, right).normalize();
+
+        for (let i = 0; i < count; i++) {
+            const t = i / Math.max(1, count - 1);
+            const cosAngle = 1 - t * (1 - Math.cos(maxAngleRad));
+            const sinAngle = Math.sqrt(1 - cosAngle * cosAngle);
+            const theta = 2 * Math.PI * goldenRatio * i;
+
+            const x = Math.cos(theta) * sinAngle;
+            const y = Math.sin(theta) * sinAngle;
+            const z = cosAngle;
+
+            const rayDir = new THREE.Vector3()
+                .addScaledVector(right, x)
+                .addScaledVector(top, y)
+                .addScaledVector(normal, z)
+                .normalize();
+            rays.push(rayDir);
+        }
+        return rays;
+    }
+
+    function measureSunFanIterative(worldPoint, targetNormalWorld, refModel, targetModel, rayCount, stages) {
+        const preventPenetration = analysisState.sunFanPreventPenetration;
+        let currentBestHit = null;
+        let currentAngle = Math.PI / 2; 
+        let searchDirs = [targetNormalWorld.clone(), targetNormalWorld.clone().multiplyScalar(-1)];
+        
+        const sceneScale = Number.isFinite(globalScale) && globalScale > 0 ? globalScale : 1;
+        const epsStart = 0.005 * sceneScale; 
+        const epsEnd = 0.015 * sceneScale;   
+        const maxDistScene = getHeatmapMaxMm() * 2.0 * sceneScale; 
+        
+        for (let s = 0; s < stages; s++) {
+            let stageBestHit = null;
+
+            for (const baseDir of searchDirs) {
+                const origin = new THREE.Vector3().copy(worldPoint).addScaledVector(baseDir, epsStart);
+                const dirs = getFibonacciRays(rayCount, baseDir, currentAngle);
+
+                for (const dir of dirs) {
+                    const hit = raycastFirstMesh(refModel.mesh, origin, dir, maxDistScene, _candidateRaycaster);
+                    if (hit) {
+                        const refNormal = getNormalFromFace(refModel.mesh, hit.faceIndex);
+                        if (refNormal && Math.abs(targetNormalWorld.dot(refNormal)) > 0.05) {
+                             let isValid = true;
+                             if (preventPenetration) {
+                                 const checkDist = hit.distance - epsEnd; 
+                                 if (checkDist > epsStart) {
+                                     const hitT = raycastFirstMesh(targetModel.mesh, origin, dir, checkDist, _segmentRaycaster);
+                                     if (hitT) { isValid = false; }
+                                 }
+                             }
+
+                             if (isValid) {
+                                 if (!stageBestHit || hit.distance < stageBestHit.distance) {
+                                     stageBestHit = hit; stageBestHit.refNormal = refNormal;
+                                 }
+                             }
+                        }
+                    }
+                }
+            }
+
+            if (stageBestHit) {
+                if (!currentBestHit || stageBestHit.distance < currentBestHit.distance) { currentBestHit = stageBestHit; }
+                const newDir = new THREE.Vector3().copy(stageBestHit.point).sub(worldPoint).normalize();
+                searchDirs = [newDir]; currentAngle = currentAngle / 3; 
+            } else { break; }
+        }
+
+        if (currentBestHit) {
+            const sign = Math.sign(_tmpVec2.copy(worldPoint).sub(currentBestHit.point).dot(currentBestHit.refNormal)) || 1;
+            const exactSceneDist = worldPoint.distanceTo(currentBestHit.point);
+            const distanceMm = exactSceneDist / sceneScale;
+
+            return {
+                closestWorld: currentBestHit.point.clone(),
+                distanceMm: distanceMm,
+                signedMm: distanceMm * sign,
+                faceIndex: currentBestHit.faceIndex,
+                method: 'sun-fan-iterative' + (preventPenetration ? '-safe' : '')
+            };
+        }
+        return null;
+    }
+
+    function findNextValidMeasurement(worldPoint, targetModel, refModel, targetNormalWorld, options = {}) {
+      const { strategy = getMeasurementStrategy() } = options;
+
+      if (strategy === 'sun_fan') {
+          if (!targetNormalWorld) return null;
+          return measureSunFanIterative(worldPoint, targetNormalWorld, refModel, targetModel, analysisState.sunFanRays, analysisState.sunFanStages);
+      }
+
+      if (strategy === 'closest') {
+        const cpPrimary = closestPointOnTargetBvh(worldPoint, refModel, targetNormalWorld);
+        if (cpPrimary) cpPrimary.method = 'closest-point-fast';
+        return cpPrimary;
+      }
+
+      return null;
+    }
+
+    function formatDistance(mm, { signed = false } = {}) {
+      if (!Number.isFinite(mm)) return '—';
+      const prefix = signed ? (mm >= 0 ? '+' : '') : '';
+      if (analysisUI.unitSelect.value === 'um') return `${prefix}${(mm * 1000).toFixed(1)} µm`;
+      return `${prefix}${mm.toFixed(4)} mm`;
+    }
+
+    function heatColorSigned(t) {
+      t = THREE.MathUtils.clamp(t, 0, 1);
+      const c = new THREE.Color();
+      if (t < 0.25) c.lerpColors(new THREE.Color(0x2d6cff), new THREE.Color(0x23c6ff), t / 0.25);
+      else if (t < 0.5) c.lerpColors(new THREE.Color(0x23c6ff), new THREE.Color(0x2bd77a), (t - 0.25) / 0.25);
+      else if (t < 0.75) c.lerpColors(new THREE.Color(0x2bd77a), new THREE.Color(0xffd43b), (t - 0.5) / 0.25);
+      else c.lerpColors(new THREE.Color(0xffd43b), new THREE.Color(0xff5d5d), (t - 0.75) / 0.25);
+      return c;
+    }
+
+    function heatColorAbs(t) { return heatColorSigned(t); }
+
+    async function computeHeatmap() {
+      if (!rolesReady()) throw new Error('Referenz/Ziel fehlen.');
+      const ref = getRefModel();
+      const target = getTargetModel();
+
+      ensureBvhForModel(ref); ensureBvhForModel(target);
+
+      const geom = target.mesh.geometry;
+      const pos = geom.getAttribute('position');
+      const nor = geom.getAttribute('normal');
+      if (!pos || !nor) throw new Error('Zielmodell hat keine Vertexdaten.');
+
+      const maxMm = getHeatmapMaxMm();
+      
+      const mode = 'signed'; 
+      const strategy = 'closest'; 
+
+      analysisState.isComputingHeatmap = true;
+      updateAnalysisUIState();
+      setAnalysisStatus(`Heatmap wird berechnet ...`, 'warn');
+
+      if (!target.analysis) target.analysis = {};
+      if (!target.analysis.originalMaterial) target.analysis.originalMaterial = target.material;
+      if (!target.analysis.originalColorAttr && geom.getAttribute('color')) target.analysis.originalColorAttr = geom.getAttribute('color').clone();
+      if (!target.analysis.heatmapMaterial) {
+        target.analysis.heatmapMaterial = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.72, metalness: 0.02, side: THREE.DoubleSide, transparent: true, opacity: getHeatmapOpacity() });
+      }
+
+      const colors = new Float32Array(pos.count * 3);
+      const batch = 1200; 
+
+      for (let i = 0; i < pos.count; i++) {
+        _vLocal.fromBufferAttribute(pos, i);
+        _vWorld.copy(_vLocal).applyMatrix4(target.mesh.matrixWorld);
+        _nLocal.fromBufferAttribute(nor, i);
+        _matN.getNormalMatrix(target.mesh.matrixWorld);
+        _nWorld.copy(_nLocal).applyMatrix3(_matN).normalize();
+
+        const cp = findNextValidMeasurement(_vWorld, target, ref, _nWorld, { forHeatmap: true, tryClosestFallback: true, strategy: strategy });
+        const signedMm = cp ? cp.signedMm : maxMm;
+        const absMm = cp ? cp.distanceMm : maxMm;
+
+        let color = mode === 'signed' ? heatColormSignedByMm(signedMm) : heatColormAbsByMm(absMm, maxMm);
+        colors[i * 3 + 0] = color.r; colors[i * 3 + 1] = color.g; colors[i * 3 + 2] = color.b;
+
+        if (i % batch === 0) {
+          setAnalysisStatus(`Heatmap wird berechnet ... ${Math.round((i / pos.count) * 100)}%`, 'warn');
+          await new Promise(requestAnimationFrame);
+        }
+      }
+
+      geom.setAttribute('color', new THREE.BufferAttribute(colors, 3));
+      geom.attributes.color.needsUpdate = true;
+
+      target.analysis.heatmapMaterial.opacity = getHeatmapOpacity();
+      syncTargetOpacitySliderWithHeatmap(getHeatmapOpacity());
+      target.analysis.heatmapMaterial.transparent = true; target.analysis.heatmapMaterial.depthWrite = false;
+      target.mesh.material = target.analysis.heatmapMaterial; target.material = target.mesh.material;
+
+      if (!ref.analysis.refOpacityBackup) ref.analysis.refOpacityBackup = { transparent: ref.material.transparent, opacity: ref.material.opacity, depthWrite: ref.material.depthWrite };
+      ref.material.transparent = true; ref.material.opacity = 0.30; ref.material.depthWrite = false; ref.material.needsUpdate = true;
+
+      analysisState.isComputingHeatmap = false; analysisState.heatmapEnabled = true;
+      analysisUI.heatmapToggle.checked = true; analysisUI.legend.style.display = 'block';
+      updateLegendUI(); syncHeatmapOpacityUi(); updateAnalysisUIState();
+      setAnalysisStatus('Heatmap auf Zielmodell fertig.', 'ok');
+    }
+
+    function disableHeatmap({ silent = false } = {}) {
+      const ref = getRefModel(); const target = getTargetModel();
+      if (target?.mesh?.geometry && target.analysis) {
+        const geom = target.mesh.geometry;
+        if (target.analysis.originalColorAttr) geom.setAttribute('color', target.analysis.originalColorAttr.clone());
+        else if (geom.getAttribute('color')) geom.deleteAttribute('color');
+        if (target.analysis.originalMaterial) { target.mesh.material = target.analysis.originalMaterial; target.material = target.mesh.material; }
+      }
+      if (ref?.analysis?.refOpacityBackup) {
+        const b = ref.analysis.refOpacityBackup;
+        ref.material.transparent = b.transparent; ref.material.opacity = b.opacity; ref.material.depthWrite = b.depthWrite; ref.material.needsUpdate = true;
+      }
+      analysisState.heatmapEnabled = false; analysisUI.heatmapToggle.checked = false; analysisUI.legend.style.display = 'none';
+      updateAnalysisUIState();
+      if (!silent) setAnalysisStatus('Heatmap deaktiviert.', 'ok');
+    }
+
+    function updateClearButtonVisibility() {
+        if (clearPinsBtn) {
+            clearPinsBtn.style.display = pinnedMeasurements.length > 0 ? 'inline-block' : 'none';
+        }
+    }
+
+    function clearAllPinnedMeasurements() {
+        pinnedMeasurements.forEach(pin => {
+            if (pin.el) pin.el.remove();
+            if (pin.line) pin.line.remove();
+            if (pin.group3D) {
+                scene.remove(pin.group3D);
+                if (pin.line3D) { pin.line3D.geometry.dispose(); pin.line3D.material.dispose(); }
+                if (pin.targetDot) { pin.targetDot.geometry.dispose(); pin.targetDot.material.dispose(); }
+                if (pin.refDot) { pin.refDot.geometry.dispose(); pin.refDot.material.dispose(); }
+            }
+        });
+        pinnedMeasurements.length = 0;
+        updateClearButtonVisibility();
+    }
+    clearPinsBtn.addEventListener('click', clearAllPinnedMeasurements);
+
+    function addPinnedMeasurement(data) {
+        const target = getTargetModel();
+        const ref = getRefModel();
+        if (!target || !ref) return;
+
+        const id = 'pin-' + Date.now() + Math.random();
+        const el = document.createElement('div');
+        el.className = 'pinned-measurement';
+        
+        const sign = data.signedMm >= 0 ? '+' : '';
+        const valStr = analysisState.signedEnabled ? `${sign}${data.signedMm.toFixed(3)}` : `${data.absMm.toFixed(3)}`;
+        el.textContent = valStr;
+        el.style.color = '#' + data.colorHex;
+
+        mountRef.appendChild(el);
+
+        const line = document.createElementNS('http://www.w3.org/2000/svg', 'line');
+        line.setAttribute('class', 'measurement-line');
+        linesSvg.appendChild(line);
+
+        _matInv.copy(target.mesh.matrixWorld).invert();
+        const localTargetPoint = data.worldPoint.clone().applyMatrix4(_matInv);
+
+        _matInv.copy(ref.mesh.matrixWorld).invert();
+        const localRefPoint = data.refPoint.clone().applyMatrix4(_matInv);
+
+        const pinGroup3D = new THREE.Group();
+        
+        const lineGeom = new THREE.BufferGeometry().setFromPoints([data.worldPoint, data.refPoint]);
+        const lineMat = new THREE.LineBasicMaterial({ color: 0xcccccc, depthTest: false, linewidth: 2 });
+        const pinLine3D = new THREE.Line(lineGeom, lineMat);
+        pinLine3D.renderOrder = 998;
+
+        const targetSphereMat = new THREE.MeshBasicMaterial({ color: 0xffb020, depthTest: false });
+        const refSphereMat = new THREE.MeshBasicMaterial({ color: 0x4aa3ff, depthTest: false });
+        
+        const targetDot = new THREE.Mesh(pinSphereGeom, targetSphereMat);
+        targetDot.position.copy(data.worldPoint);
+        targetDot.scale.setScalar(analysisState.pinPointSize);
+        targetDot.renderOrder = 999;
+        
+        const refDot = new THREE.Mesh(pinSphereGeom, refSphereMat);
+        refDot.position.copy(data.refPoint);
+        refDot.scale.setScalar(analysisState.pinPointSize);
+        refDot.renderOrder = 999;
+
+        pinGroup3D.add(pinLine3D, targetDot, refDot);
+        scene.add(pinGroup3D);
+
+        const pin = {
+            id, 
+            localTargetPoint: localTargetPoint, 
+            localRefPoint: localRefPoint, 
+            targetIndex: analysisState.targetIndex,
+            refIndex: analysisState.refIndex,
+            el, line, offsetX: 40, offsetY: -40,
+            group3D: pinGroup3D, line3D: pinLine3D, targetDot: targetDot, refDot: refDot
+        };
+
+        el.addEventListener('mousedown', (e) => {
+            isDraggingPin = true; dragPinTarget = pin;
+            dragMouseStart = { x: e.clientX, y: e.clientY }; dragPinStartOffset = { x: pin.offsetX, y: pin.offsetY };
+            e.stopPropagation(); 
+        });
+
+        pinnedMeasurements.push(pin);
+        updateClearButtonVisibility();
+        renderPinnedMeasurements(); 
+    }
+
+    document.addEventListener('mousemove', (e) => {
+        if (isDraggingPin && dragPinTarget) {
+            const dx = e.clientX - dragMouseStart.x; const dy = e.clientY - dragMouseStart.y;
+            dragPinTarget.offsetX = dragPinStartOffset.x + dx; dragPinTarget.offsetY = dragPinStartOffset.y + dy;
+            if (analysisUI.tooltip) analysisUI.tooltip.style.display = 'none';
+        }
+    });
+    document.addEventListener('mouseup', () => { isDraggingPin = false; dragPinTarget = null; });
+
+    function renderPinnedMeasurements() {
+        if (pinnedMeasurements.length === 0) return;
+        const rect = mountRef.getBoundingClientRect();
+        const width = rect.width; const height = rect.height;
+
+        pinnedMeasurements.forEach(pin => {
+            const target = models[pin.targetIndex];
+            const ref = models[pin.refIndex];
+            
+            if (!target || !target.mesh || !target.visible || !ref || !ref.mesh || !ref.visible || (!analysisState.hoverEnabled && !sectionUI.measureToggle.checked)) {
+                 pin.el.style.display = 'none'; pin.line.style.display = 'none'; 
+                 pin.group3D.visible = false;
+                 return;
+            }
+
+            const currentWorldTarget = pin.localTargetPoint.clone().applyMatrix4(target.mesh.matrixWorld);
+            const currentWorldRef = pin.localRefPoint.clone().applyMatrix4(ref.mesh.matrixWorld);
+            
+            pin.group3D.visible = true;
+            pin.targetDot.position.copy(currentWorldTarget);
+            pin.refDot.position.copy(currentWorldRef);
+            
+            const posAttr = pin.line3D.geometry.attributes.position;
+            posAttr.setXYZ(0, currentWorldTarget.x, currentWorldTarget.y, currentWorldTarget.z);
+            posAttr.setXYZ(1, currentWorldRef.x, currentWorldRef.y, currentWorldRef.z);
+            posAttr.needsUpdate = true;
+
+            const v = currentWorldTarget.clone().project(camera);
+
+            if (v.z > 1.0) { pin.el.style.display = 'none'; pin.line.style.display = 'none'; return; }
+
+            pin.el.style.display = 'block'; pin.line.style.display = 'block';
+            const x3d = (v.x * 0.5 + 0.5) * width; const y3d = -(v.y * 0.5 - 0.5) * height;
+
+            pin.el.style.left = (x3d + pin.offsetX) + 'px'; pin.el.style.top = (y3d + pin.offsetY) + 'px';
+            pin.line.setAttribute('x1', x3d); pin.line.setAttribute('y1', y3d);
+            pin.line.setAttribute('x2', x3d + pin.offsetX); pin.line.setAttribute('y2', y3d + pin.offsetY);
+        });
+    }
+
+    renderer.domElement.addEventListener('click', (e) => {
+        if ((analysisState.hoverEnabled || (sectionUI.measureToggle && sectionUI.measureToggle.checked)) && analysisState.currentHoverData && !isDraggingPin) {
+            addPinnedMeasurement(analysisState.currentHoverData);
+        }
+    });
+
+    function updateHoverMeasurement(clientX, clientY) {
+      if (!analysisState.hoverEnabled || !rolesReady()) { clearHoverVisuals(); return; }
+      if (isDraggingPin) { clearHoverVisuals(); return; } 
+
+      const ref = getRefModel(); const target = getTargetModel();
+      if (!ref?.mesh || !target?.mesh || !ref.analysis?.bvhReady || !target.analysis?.bvhReady || !target.mesh.visible) { clearHoverVisuals(); return; }
+
+      const rect = renderer.domElement.getBoundingClientRect();
+      const x = clientX - rect.left; const y = clientY - rect.top;
+      if (x < 0 || y < 0 || x > rect.width || y > rect.height) { clearHoverVisuals(); return; }
+
+      mouseNdc.x = (x / rect.width) * 2 - 1; mouseNdc.y = -(y / rect.height) * 2 + 1;
+      raycaster.setFromCamera(mouseNdc, camera);
+      const hits = raycaster.intersectObject(target.mesh, false);
+      if (!hits.length) { clearHoverVisuals(); return; }
+
+      const hit = hits[0]; const worldPoint = hit.point;
+      let targetNormalWorld = null;
+      if (hit.face?.normal) { _matN.getNormalMatrix(target.mesh.matrixWorld); targetNormalWorld = hit.face.normal.clone().applyMatrix3(_matN).normalize(); }
+
+      const cp = findNextValidMeasurement(worldPoint, target, ref, targetNormalWorld, { forHeatmap: false, tryClosestFallback: true });
+      if (!cp) { clearHoverVisuals(); return; }
+
+      const signedMode = analysisState.signedEnabled && !!targetNormalWorld;
+      const mainLabel = signedMode ? formatDistance(cp.signedMm, { signed: true }) : formatDistance(cp.distanceMm);
+      const absLabel = formatDistance(cp.distanceMm);
+      const txt = signedMode ? `Δ = ${mainLabel} | |Δ| = ${absLabel}` : `Δ = ${absLabel}`;
+      
+      analysisUI.hoverValue.textContent = txt; analysisUI.tooltip.textContent = txt;
+      analysisUI.tooltip.style.left = `${x}px`; analysisUI.tooltip.style.top = `${y}px`; analysisUI.tooltip.style.display = 'block';
+
+      hoverPTarget.position.copy(worldPoint); hoverPRef.position.copy(cp.closestWorld);
+      hoverPRef.visible = hoverPTarget.visible = true;
+
+      const arr = hoverLine.geometry.attributes.position.array;
+      arr[0] = worldPoint.x; arr[1] = worldPoint.y; arr[2] = worldPoint.z; arr[3] = cp.closestWorld.x; arr[4] = cp.closestWorld.y; arr[5] = cp.closestWorld.z;
+      hoverLine.geometry.attributes.position.needsUpdate = true; hoverLine.visible = true;
+
+      const maxMm = getHeatmapMaxMm();
+      const colorHex = analysisState.heatmapMode === 'signed' ? 
+                       heatColormSignedByMm(cp.signedMm).getHexString() : 
+                       heatColormAbsByMm(cp.distanceMm, maxMm).getHexString();
+
+      analysisState.currentHoverData = {
+          worldPoint: worldPoint.clone(),
+          refPoint: cp.closestWorld.clone(),
+          signedMm: cp.signedMm, absMm: cp.distanceMm, colorHex: colorHex
+      };
+    }
+
+    function updateModelControls() {
+      modelControls.innerHTML = '';
+      models.forEach((model, index) => {
+        if (!model) return;
+        const isRef = analysisState.refIndex === index; const isTarget = analysisState.targetIndex === index;
+        const roleBadge = isRef ? '<span class="role-badge ref">Referenz</span>' : isTarget ? '<span class="role-badge target">Ziel</span>' : '';
+        const modelDiv = document.createElement('div'); modelDiv.className = 'model-control';
+        modelDiv.innerHTML = `
+          <label>${escapeHtml(model.name)} ${roleBadge}</label><br>
+          ${model.mesh ? `
+            <input type="color" value="#${model.material.color.getHexString()}" onchange="window.updateColor(${index}, this.value)" />
+            <label>Transparenz</label>
+            <input type="range" id="model-opacity-${index}" min="0.05" max="1" step="0.01" value="${model.opacity}" onchange="window.updateOpacity(${index}, this.value)" />
+            <br><label>Anordnung</label>
+            <input type="number" class="small-input" value="${model.renderOrder}" onchange="window.updateRenderOrder(${index}, this.value)" />
+            <br><label>Modell Ein / Ausblenden</label>
+            <input type="checkbox" id="visibility-toggle-${index}" ${model.visible ? 'checked' : ''} onchange="window.toggleVisibility(${index}, this.checked)" />
+            <br><label>Wireframe</label>
+            <input type="checkbox" onchange="window.toggleWireframe(${index}, this.checked)" />
+            <br><button onclick="window.setAnalysisRole(${index}, 'ref')">Als Referenz</button>
+            <button onclick="window.setAnalysisRole(${index}, 'target')">Als Ziel</button>
+          ` : `<div style="color:#ffaaaa;">Laden fehlgeschlagen</div>`}
+        `;
+        modelControls.appendChild(modelDiv);
+      });
+      updateAnalysisUIState();
+    }
+
+    function markModelAnalysisDirty(index) {
+      const m = models[index]; if (!m) return; if (!m.analysis) m.analysis = {}; m.analysis.bvhReady = false;
+      if (m.mesh?.geometry?.disposeBoundsTree && m.mesh.geometry.boundsTree) { try { m.mesh.geometry.disposeBoundsTree(); } catch (e) {} }
+      if (analysisState.refIndex === index || analysisState.targetIndex === index) { disableHeatmap({ silent: true }); analysisState.hoverEnabled = false; analysisUI.hoverToggle.checked = false; clearHoverVisuals(); }
+      updateAnalysisUIState();
+    }
+
+    window.updateColor = function(index, value) { const m = models[index]; if (!m?.material) return; m.material.color.set(value); };
+    window.updateOpacity = function(index, value) { const m = models[index]; if (!m?.material) return; m.material.opacity = parseFloat(value); m.opacity = parseFloat(value); m.material.transparent = true; m.material.needsUpdate = true; };
+    window.updateRenderOrder = function(index, value) { const m = models[index]; if (!m?.mesh) return; m.mesh.renderOrder = parseInt(value); m.renderOrder = parseInt(value); };
+    window.toggleVisibility = function(index, checked) { const m = models[index]; if (!m?.mesh) return; m.visible = checked; m.mesh.visible = checked; if ((analysisState.refIndex === index || analysisState.targetIndex === index) && !checked) { clearHoverVisuals(); } };
+    window.toggleWireframe = function(index, checked) { const m = models[index]; if (!m?.material) return; m.material.wireframe = checked; m.material.needsUpdate = true; };
+
+    function createMeshFromGeometry(geometry, options = {}, index, texture = null) {
+      let geom = geometry; 
+      if (geom.index) geom = geom.toNonIndexed(); 
+      geom.computeVertexNormals();
+      
+      const matOpts = { 
+          transparent: true, 
+          opacity: options.opacity ?? 1, 
+          side: THREE.DoubleSide 
+      };
+
+      if (texture) {
+          matOpts.map = texture;
+          matOpts.color = 0xffffff;
+      } else {
+          matOpts.color = options.color ? new THREE.Color(options.color) : Math.random() * 0xffffff;
+          if (geom.hasAttribute('color')) matOpts.vertexColors = true;
+      }
+
+      const material = new THREE.MeshPhongMaterial(matOpts);
+      const mesh = new THREE.Mesh(geom, material); 
+      mesh.renderOrder = options.renderOrder || (index + 1); 
+      mesh.scale.set(globalScale, globalScale, globalScale); 
+      mesh.visible = options.visible !== undefined ? options.visible : true;
+      scene.add(mesh); 
+      return { mesh, material };
+    }
+
+    function registerModelAtIndex(index, fileName, mesh, material, options = {}) {
+      models[index] = { name: fileName, mesh, material, opacity: options.opacity ?? 1, renderOrder: options.renderOrder || (index + 1), visible: options.visible !== undefined ? options.visible : true, analysis: { bvhReady: false, heatmapMaterial: null, originalMaterial: material, originalColorAttr: null, targetOpacityBackup: null } };
+      updateModelControls();
+    }
+
+    function registerFailedModelAtIndex(index, fileName, options = {}) {
+      models[index] = { name: 'Fehler: ' + fileName, mesh: null, material: { color: { getHexString: () => '000000', set: () => {} }, opacity: 0, transparent: true, needsUpdate: false }, opacity: 0, renderOrder: options.renderOrder || (index + 1), visible: false, analysis: { bvhReady: false } };
+      updateModelControls();
+    }
+
+    function loadModelFromURL(modelUrl, textureUrl = null, options = {}, index, originalName = null) {
+      const fileName = originalName || options.name || modelUrl.split('/').pop().split('?')[0];
+      const extension = fileName.split('.').pop().toLowerCase();
+
+      return fetch(modelUrl).then(response => { 
+          if (!response.ok) throw new Error('Netzwerkantwort war nicht ok'); 
+          return response.arrayBuffer(); 
+      }).then(arrayBuffer => {
+          let geometry;
+          if (extension === 'ply') {
+              geometry = plyLoader.parse(arrayBuffer);
+          } else {
+              geometry = stlLoader.parse(arrayBuffer);
+          }
+          
+          let texture = null;
+          if (textureUrl) {
+              texture = textureLoader.load(textureUrl);
+              texture.colorSpace = THREE.SRGBColorSpace; 
+          }
+
+          const { mesh, material } = createMeshFromGeometry(geometry, options, index, texture);
+          registerModelAtIndex(index, fileName, mesh, material, options);
+      }).catch(error => { 
+          console.error("Fehler:", error); 
+          registerFailedModelAtIndex(index, fileName, options); 
+          throw error; 
+      });
+    }
+
+    function animate() { 
+        requestAnimationFrame(animate); 
+        controls.update(); 
+        renderer.render(scene, camera); 
+        renderPinnedMeasurements(); 
+    }
+    animate();
+
+    globalScaleInput.addEventListener('input', (e) => {
+      globalScale = parseFloat(e.target.value);
+      models.forEach(model => { if (model && model.mesh) { model.mesh.scale.set(globalScale, globalScale, globalScale); model.mesh.updateMatrixWorld(true); } });
+      document.getElementById('current-scale').textContent = globalScale;
+      if (analysisState.heatmapEnabled && rolesReady()) { computeHeatmap().catch(err => setAnalysisStatus(`Heatmap-Fehler nach Skalierung: ${err.message}`, 'err')); }
+      if (analysisState.hoverEnabled && analysisState.lastMouse.inside) { updateHoverMeasurement(analysisState.lastMouse.x, analysisState.lastMouse.y); }
+      setAnalysisStatus(`Skalierung gesetzt: ${globalScale}. Darstellung skaliert, Messwerte bleiben in STL-mm.`, 'ok');
+    });
+
+    fovInput?.addEventListener('input', (e) => { fov = parseInt(e.target.value, 10); camera.fov = fov; camera.updateProjectionMatrix(); const currentFov = document.getElementById('current-fov'); if (currentFov) currentFov.textContent = fov; });
+    bgColorInput.addEventListener('input', (e) => { renderer.setClearColor(e.target.value, 1); });
+    gridToggle.addEventListener('change', (e) => { gridHelper.visible = e.target.checked; });
+
+    const cameraXInput = document.getElementById('camera-x'); const cameraYInput = document.getElementById('camera-y'); const cameraZInput = document.getElementById('camera-z'); const updateCameraButton = document.getElementById('update-camera-button');
+    updateCameraButton?.addEventListener('click', () => { camera.position.set(parseFloat(cameraXInput.value), parseFloat(cameraYInput.value), parseFloat(cameraZInput.value)); camera.lookAt(0, 0, 0); controls.update(); });
+
+    controls.addEventListener('change', () => {
+      if (document.activeElement !== cameraXInput && document.activeElement !== cameraYInput && document.activeElement !== cameraZInput) {
+        if(cameraXInput) cameraXInput.value = camera.position.x.toFixed(2);
+        if(cameraYInput) cameraYInput.value = camera.position.y.toFixed(2);
+        if(cameraZInput) cameraZInput.value = camera.position.z.toFixed(2);
+      }
+    });
+
+    document.getElementById('add-model-button').addEventListener('click', () => fileInput.click());
+    fileInput.addEventListener('change', (e) => { 
+        const files = Array.from(e.target.files);
+        if (files.length === 0) return;
+
+        const modelFiles = files.filter(f => f.name.toLowerCase().endsWith('.stl') || f.name.toLowerCase().endsWith('.ply'));
+        const textureFiles = files.filter(f => f.name.toLowerCase().match(/\.(jpg|jpeg|png)$/));
+
+        modelFiles.forEach(modelFile => {
+            const baseName = modelFile.name.substring(0, modelFile.name.lastIndexOf('.'));
+            
+            let textureFile = textureFiles.find(t => t.name.substring(0, t.name.lastIndexOf('.')) === baseName);
+            if (!textureFile && textureFiles.length === 1 && modelFiles.length === 1) {
+                textureFile = textureFiles[0];
+            }
+            
+            const modelUrl = URL.createObjectURL(modelFile);
+            const textureUrl = textureFile ? URL.createObjectURL(textureFile) : null;
+            
+            loadModelFromURL(modelUrl, textureUrl, { name: modelFile.name }, models.length, modelFile.name);
+        });
+        fileInput.value = ''; 
+    });
+
+    document.getElementById('load-url-button').addEventListener('click', () => { 
+        const modelUrl = document.getElementById('model-url-input').value; 
+        const textureUrl = document.getElementById('texture-url-input').value; 
+        if (modelUrl) {
+            loadModelFromURL(modelUrl, textureUrl ? textureUrl : null, {}, models.length); 
+        }
+    });
+
+    analysisUI.buildBvhBtn.addEventListener('click', buildBvhForRoles);
+    analysisUI.heatmapToggle.addEventListener('change', async (e) => { if (!e.target.checked) { disableHeatmap(); return; } try { await computeHeatmap(); } catch (err) { analysisState.isComputingHeatmap = false; analysisState.heatmapEnabled = false; analysisUI.heatmapToggle.checked = false; updateAnalysisUIState(); setAnalysisStatus(`Heatmap-Fehler: ${err.message}`, 'err'); } });
+    analysisUI.hoverToggle.addEventListener('change', (e) => { 
+        analysisState.hoverEnabled = !!e.target.checked; 
+        if (!analysisState.hoverEnabled) {
+            clearHoverVisuals(); 
+            if (!sectionUI.measureToggle.checked) {
+                document.querySelectorAll('.pinned-measurement').forEach(el => el.style.display = 'none');
+                linesSvg.style.display = 'none';
+                pinnedMeasurements.forEach(pin => { if(pin.group3D) pin.group3D.visible = false; });
+            }
+        } else {
+            document.querySelectorAll('.pinned-measurement').forEach(el => el.style.display = 'block');
+            linesSvg.style.display = 'block';
+            pinnedMeasurements.forEach(pin => { if(pin.group3D) pin.group3D.visible = true; });
+            if (sectionUI.measureToggle) sectionUI.measureToggle.checked = false;
+        }
+        updateAnalysisUIState(); 
+        setAnalysisStatus(analysisState.hoverEnabled ? 'Maus-Messung aktiviert (Klick setzt Pins).' : 'Maus-Messung deaktiviert.', 'ok'); 
+    });
+    
+    analysisUI.heatmapModeSelect.addEventListener('change', async () => { analysisState.heatmapMode = analysisUI.heatmapModeSelect.value; analysisState.signedEnabled = analysisState.heatmapMode === 'signed'; updateLegendUI(); if (analysisState.heatmapEnabled) { try { await computeHeatmap(); } catch (err) { setAnalysisStatus(`Fehler: ${err.message}`, 'err'); } } });
+    
+    analysisUI.measurementStrategySelect?.addEventListener('change', async () => { syncMeasurementStrategyUi(); if (analysisState.hoverEnabled && analysisState.lastMouse.inside) { updateHoverMeasurement(analysisState.lastMouse.x, analysisState.lastMouse.y); } if (analysisState.heatmapEnabled) { try { await computeHeatmap(); } catch (err) { setAnalysisStatus(`Fehler: ${err.message}`, 'err'); return; } } });
+    
+    analysisUI.thresholdGreenInput.addEventListener('change', async () => { const v = parseFloat(analysisUI.thresholdGreenInput.value); if (!Number.isFinite(v) || v <= 0) analysisUI.thresholdGreenInput.value = '0.050'; const t = getSignedThresholdsMm(); analysisUI.thresholdGreenInput.value = t.green.toFixed(3); analysisUI.thresholdMidInput.value = t.mid.toFixed(3); analysisUI.heatmapMaxInput.value = t.max.toFixed(3); updateLegendUI(); if (analysisState.heatmapEnabled && analysisState.heatmapMode === 'signed') { try { await computeHeatmap(); } catch (err) { setAnalysisStatus(`Fehler: ${err.message}`, 'err'); } } });
+    analysisUI.thresholdMidInput.addEventListener('change', async () => { const v = parseFloat(analysisUI.thresholdMidInput.value); if (!Number.isFinite(v) || v <= 0) analysisUI.thresholdMidInput.value = '1.100'; const t = getSignedThresholdsMm(); analysisUI.thresholdGreenInput.value = t.green.toFixed(3); analysisUI.thresholdMidInput.value = t.mid.toFixed(3); analysisUI.heatmapMaxInput.value = t.max.toFixed(3); updateLegendUI(); if (analysisState.heatmapEnabled && analysisState.heatmapMode === 'signed') { try { await computeHeatmap(); } catch (err) { setAnalysisStatus(`Fehler: ${err.message}`, 'err'); } } });
+    analysisUI.heatmapOpacityInput.addEventListener('input', () => { syncHeatmapOpacityUi(); const opacity = getHeatmapOpacity(); const target = getTargetModel(); if (analysisState.heatmapEnabled && target?.analysis?.heatmapMaterial) { target.analysis.heatmapMaterial.opacity = opacity; target.analysis.heatmapMaterial.transparent = true; target.analysis.heatmapMaterial.needsUpdate = true; } syncTargetOpacitySliderWithHeatmap(opacity); });
+    analysisUI.heatmapMaxInput.addEventListener('change', async () => { if (!Number.isFinite(parseFloat(analysisUI.heatmapMaxInput.value)) || parseFloat(analysisUI.heatmapMaxInput.value) <= 0) { analysisUI.heatmapMaxInput.value = '4.000'; } if (analysisState.heatmapMode === 'signed') { const t = getSignedThresholdsMm(); analysisUI.thresholdGreenInput.value = t.green.toFixed(3); analysisUI.thresholdMidInput.value = t.mid.toFixed(3); analysisUI.heatmapMaxInput.value = t.max.toFixed(3); } updateLegendUI(); if (analysisState.heatmapEnabled) { try { await computeHeatmap(); } catch (err) { setAnalysisStatus(`Fehler: ${err.message}`, 'err'); } } });
+    analysisUI.unitSelect.addEventListener('change', () => { if (analysisState.hoverEnabled && analysisState.lastMouse.inside) { updateHoverMeasurement(analysisState.lastMouse.x, analysisState.lastMouse.y); } });
+    analysisUI.recomputeBtn.addEventListener('click', async () => { if (!rolesReady()) return; try { await computeHeatmap(); } catch (err) { setAnalysisStatus(`Fehler: ${err.message}`, 'err'); } });
+
+    renderer.domElement.addEventListener('mousedown', (e) => {
+        if (sectionUI.drawToggle.checked && e.button === 0) {
+            sectionState.isDrawing = true;
+            sectionState.drawStart = { x: e.clientX, y: e.clientY };
+            const rect = renderer.domElement.getBoundingClientRect();
+            sectionDrawLine.setAttribute('x1', e.clientX - rect.left); sectionDrawLine.setAttribute('y1', e.clientY - rect.top);
+            sectionDrawLine.setAttribute('x2', e.clientX - rect.left); sectionDrawLine.setAttribute('y2', e.clientY - rect.top);
+            sectionUI.svg.style.display = 'block';
+            controls.enabled = false; 
+        }
+    });
+
+    renderer.domElement.addEventListener('mousemove', (e) => { 
+        if (sectionState.isDrawing) {
+            const rect = renderer.domElement.getBoundingClientRect();
+            sectionDrawLine.setAttribute('x2', e.clientX - rect.left); sectionDrawLine.setAttribute('y2', e.clientY - rect.top);
+            return;
+        }
+
+        analysisState.lastMouse.x = e.clientX; analysisState.lastMouse.y = e.clientY; analysisState.lastMouse.inside = true; 
+        
+        if (sectionUI.measureToggle.checked && sectionState.plane) {
+            if (!updateSectionHover(e.clientX, e.clientY)) { clearHoverVisuals(); }
+        } else if (analysisState.hoverEnabled) {
+            updateHoverMeasurement(e.clientX, e.clientY);
+        } else {
+            clearHoverVisuals();
+        }
+    });
+    
+    renderer.domElement.addEventListener('mouseup', (e) => {
+        if (sectionState.isDrawing) {
+            sectionState.isDrawing = false;
+            controls.enabled = true;
+            sectionUI.drawToggle.checked = false; 
+            
+            const rect = renderer.domElement.getBoundingClientRect();
+            const startX = sectionState.drawStart.x - rect.left; const startY = sectionState.drawStart.y - rect.top;
+            const endX = e.clientX - rect.left; const endY = e.clientY - rect.top;
+
+            if (Math.hypot(endX - startX, endY - startY) > 10) {
+                generateSectionPlane(startX, startY, endX, endY, rect.width, rect.height);
+            }
+            sectionUI.svg.style.display = 'none';
+        }
+    });
+
+    sectionUI.measureToggle.addEventListener('change', (e) => {
+        if (e.target.checked) {
+            analysisUI.hoverToggle.checked = false; analysisState.hoverEnabled = false;
+        } else { clearHoverVisuals(); }
+    });
+
+    sectionUI.clearBtn.addEventListener('click', () => {
+        if (sectionState.refEdges) { scene.remove(sectionState.refEdges); sectionState.refEdges.geometry.dispose(); sectionState.refEdges = null; }
+        if (sectionState.targetEdges) { scene.remove(sectionState.targetEdges); sectionState.targetEdges.geometry.dispose(); sectionState.targetEdges = null; }
+        sectionUI.measureToggle.checked = false; sectionUI.measureToggle.disabled = true;
+        sectionUI.clearBtn.style.display = 'none'; sectionState.plane = null;
+        clearHoverVisuals();
+        setAnalysisStatus('Abschnitt gelöscht.', 'ok');
+    });
+
+    renderer.domElement.addEventListener('mouseleave', () => { analysisState.lastMouse.inside = false; clearHoverVisuals(); });
+
+    const resizeBar = document.getElementById('resize-bar'); let isResizing = false; let startX = 0; let startWidth = sidebarWidth;
+    resizeBar.addEventListener('mousedown', (e) => { e.preventDefault(); isResizing = true; startX = e.clientX; startWidth = sidebarWidth; });
+    document.addEventListener('mousemove', (e) => { if (!isResizing) return; e.preventDefault(); const newWidth = startWidth + (e.clientX - startX); if (newWidth > 150 && newWidth < (window.innerWidth - 50)) { sidebarWidth = newWidth; document.getElementById('sidebar').style.width = `${sidebarWidth}px`; renderer.setSize(window.innerWidth - sidebarWidth, window.innerHeight); camera.aspect = (window.innerWidth - sidebarWidth) / window.innerHeight; camera.updateProjectionMatrix(); } });
+    document.addEventListener('mouseup', () => { isResizing = false; });
+    window.addEventListener('resize', () => { renderer.setSize(window.innerWidth - sidebarWidth, window.innerHeight); camera.aspect = (window.innerWidth - sidebarWidth) / window.innerHeight; camera.updateProjectionMatrix(); });
+
+    // Hinzugefügt aus der THREE.js Library für Mesh Instanzierung
+    const { Mesh } = THREE;
+
+    window.onload = () => { renderer.setSize(window.innerWidth - sidebarWidth, window.innerHeight); camera.aspect = (window.innerWidth - sidebarWidth) / window.innerHeight; camera.updateProjectionMatrix(); syncMeasurementStrategyUi(); updateLegendUI(); updateAnalysisUIState(); };
+    document.addEventListener('keydown', (e) => { if (e.key === 'Escape') { analysisState.hoverEnabled = false; analysisUI.hoverToggle.checked = false; sectionUI.drawToggle.checked = false; clearHoverVisuals(); updateAnalysisUIState(); } });
+    analysisUI.status.addEventListener('dblclick', clearAnalysisRoles);
+
+    // Initiales Laden von Standard-Modellen
+    const stlFiles = [
+      { url: 'https://raw.githubusercontent.com/DigitaleAesthetischeZahnmedizin/CAD_CAM/refs/heads/main/STL/149394482_shell_occlusion_u.stl', options: { visible: true, opacity: 0.5, renderOrder: 2, color: '#00E0FF' } },
+      { url: 'https://raw.githubusercontent.com/DigitaleAesthetischeZahnmedizin/CAD_CAM/refs/heads/main/STL/08.11.2024 13.22 2565_20240611100718_UpperJaw.stl.stl', options: { visible: true, opacity: 1.0, renderOrder: 1, color: '#ff0000' } },
+      { url: 'https://raw.githubusercontent.com/DigitaleAesthetischeZahnmedizin/CAD_CAM/refs/heads/main/STL/TM UpperJawScan.stl', options: { visible: true, opacity: 0.3, renderOrder: 3, color: '#CDFF00' } },
+      { url: 'https://raw.githubusercontent.com/DigitaleAesthetischeZahnmedizin/CAD_CAM/refs/heads/main/STL/Referenzkugeln_0.5mm_Durchmesser.stl', options: { visible: true, opacity: 1.0, renderOrder: 1, color: '#ff0000' } },
+      { url: 'https://raw.githubusercontent.com/DigitaleAesthetischeZahnmedizin/CAD_CAM/refs/heads/main/STL/2025-02-25-150915-64253-RG-upperjaw.stl', options: { visible: false, opacity: 0.3, renderOrder: 3, color: '#8F00FF' } },
+      { url: 'https://raw.githubusercontent.com/DigitaleAesthetischeZahnmedizin/CAD_CAM/refs/heads/main/STL/08.11.2024 13.22 2565_20240611100718_PreOpUpper.stl.stl', options: { visible: false, opacity: 0.3, renderOrder: 2, color: '#FF00F8' } },
+      { url: 'https://raw.githubusercontent.com/DigitaleAesthetischeZahnmedizin/CAD_CAM/refs/heads/main/STL/08.11.2024 13.22 2565_20240611100718_LowerJaw.stl.stl', options: { visible: false, opacity: 0.3, renderOrder: 3, color: '#FF00F8' } },
+      { url: 'https://raw.githubusercontent.com/DigitaleAesthetischeZahnmedizin/CAD_CAM/refs/heads/main/STL/149394482_shell_occlusion_l.stl', options: { visible: false, opacity: 0.3, renderOrder: 3, color: '#00E0FF' } },
+      { url: 'https://raw.githubusercontent.com/DigitaleAesthetischeZahnmedizin/CAD_CAM/refs/heads/main/STL/TM LowerJawScan.stl', options: { visible: false, opacity: 0.3, renderOrder: 3, color: '#CDFF00' } },
+      { url: 'https://raw.githubusercontent.com/DigitaleAesthetischeZahnmedizin/CAD_CAM/refs/heads/main/STL/2025-02-25-150915-64253-RG-lowerjaw.stl', options: { visible: false, opacity: 0.3, renderOrder: 3, color: '#8F00FF' } }
+    ];
+
+    const promises = stlFiles.map((file, index) => loadModelFromURL(file.url, null, file.options, index));
+
+    Promise.allSettled(promises).then(results => {
+      const resultsDiv = document.createElement('div');
+      resultsDiv.style.backgroundColor = '#222';
+      resultsDiv.style.color = '#fff';
+      resultsDiv.style.padding = '10px';
+      resultsDiv.innerHTML = '<h3>Modell-Ladeergebnisse:</h3>';
+      results.forEach((result, index) => {
+        if (result.status === 'fulfilled') {
+          resultsDiv.innerHTML += `<p>Modell ${index + 1}: Erfolgreich geladen.</p>`;
+        } else {
+          resultsDiv.innerHTML += `<p>Modell ${index + 1}: Fehler beim Laden.</p>`;
+        }
+      });
+      document.getElementById('sidebar-content').appendChild(resultsDiv);
+
+      if (models.length >= 2 && !Number.isInteger(analysisState.refIndex) && !Number.isInteger(analysisState.targetIndex)) {
+        const wantRef = '08.11.2024 13.22 2565_20240611100718_UpperJaw.stl.stl';
+        const wantTarget = '149394482_shell_occlusion_u.stl';
+        const normalizeName = (n) => { try { return decodeURIComponent(String(n || '')); } catch (e) { return String(n || ''); } };
+        let prefRef = models.findIndex(m => m?.mesh && normalizeName(m.name) === wantRef);
+        let prefTarget = models.findIndex(m => m?.mesh && normalizeName(m.name) === wantTarget);
+
+        if (prefRef >= 0 && prefTarget >= 0 && prefRef !== prefTarget) {
+          analysisState.refIndex = prefRef;
+          analysisState.targetIndex = prefTarget;
+        } else {
+          const firstValid = models.findIndex(m => m?.mesh);
+          const secondValid = models.findIndex((m, i) => i !== firstValid && m?.mesh);
+          if (firstValid >= 0 && secondValid >= 0) {
+            analysisState.refIndex = firstValid;
+            analysisState.targetIndex = secondValid;
+          }
+        }
+
+        if (Number.isInteger(analysisState.refIndex) && Number.isInteger(analysisState.targetIndex)) {
+          updateModelControls();
+          resetAnalysisStateOnRoleChange();
+          setAnalysisStatus(`Standardrollen gesetzt: Referenz = ${models[analysisState.refIndex]?.name || '—'} | Ziel = ${models[analysisState.targetIndex]?.name || '—'}`, 'ok');
+        }
+      }
+    });
+
+    syncMeasurementStrategyUi();
+    updateAnalysisUIState();
+    setAnalysisStatus('Bitte Referenz- und Zielmodell festlegen.', 'warn');
+</script>
+</body>
+</html>
